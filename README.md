@@ -5,7 +5,7 @@ Content migration tools for AEM Franklin
 
 Clone this project and run `npm install`.
 
-#### To run an import
+### To run an import
 Simple example:
 ```
 ./index.js import --urls data/test-urls.json --ts scripts/import.js
@@ -17,4 +17,21 @@ for more information on transformation script.
 By default imported documents and import report will be stored under `docs` subfolder. You can change this as follows.
 ```
 ./index.js import --urls data/test-urls.json --ts scripts/import.js --target /myImportedDocs
-``` 
+```
+
+#### Notes on transformation script
+Note that in order to be loaded by Node module system the transformation script file has a `.mjs` extension. 
+Also, for compatibility with both this CLI tool and [Franklin Importer](https://github.com/adobe/helix-importer-ui) runing in the browser it needs to have both exports bellow.
+```javascript
+// export compatible with node
+export {
+  preprocess,
+  transform
+}
+
+// export compatible with browser but breaks with node
+export default {
+  preprocess: preprocess,
+  transform: transform
+}
+```
