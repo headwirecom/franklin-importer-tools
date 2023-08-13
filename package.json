@@ -1,0 +1,20 @@
+{
+  "name": "franklin-importer-tools",
+  "version": "1.0.0",
+  "description": "Collection of tools for migrating content to AEM Franklin",
+  "main": ".",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Henry S.",
+  "license": "ISC",
+  "dependencies": {
+    "@adobe/helix-importer": "2.9.19",
+    "exceljs": "^4.3.0",
+    "fs-extra": "^11.1.1",
+    "jsdom": "^22.1.0",
+    "node-fetch": "3.3.2",
+    "yargs": "^17.7.2"
+  }
+}
