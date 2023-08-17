@@ -5,6 +5,7 @@ import Path from 'path';
 import fs from 'fs-extra';
 import { Utils, html2docx, html2md } from '@adobe/helix-importer';
 import getEntries from '../impl/entries.js';
+import { asJson } from '../impl/args.js'
 
 function fixLinks(url, document, attrNames) {
     const protocol = new URL(url).protocol;
@@ -24,7 +25,7 @@ const desc = 'import site content';
 const builder = {
     urls: {
         alias: 'u',
-        describe: 'url or local path to json object containing the list of urls to import',
+        describe: 'url or local path to json file containing the list of urls to import',
         required: true
     },
     transformScript: {
@@ -34,12 +35,17 @@ const builder = {
     },
     target: {
         alias: 't',
-        describe: "local path to store import output",
+        describe: 'local path to store import output',
         default: './docs'
     },
     type: {
         description: "file type (md or docx, or \"md|docx\" for both) for saving output",
         default: "docx"
+    },
+    params: {
+        alias: 'p',
+        description: 'parameters to pass to DOM trasformation script',
+        default: '{}'
     }
 };
 
@@ -160,6 +166,7 @@ const handler = async (argv) => {
     const tsPath = absPath(argv.transformScript);
     const projectTransformer = await import(tsPath);
     const entries = await getEntries(argv.urls);
+    const params = (argv.params) ? await asJson(argv.params) : {};
     importStatus.total = entries.length;
     await Utils.asyncForEach(entries, async (url, index) => {
         importStatus.imported += 1;
@@ -179,7 +186,7 @@ const handler = async (argv) => {
                     fixLinks(url, doc, ['srcset', 'src']);
                     // console.log(`${importStatus.imported}/${importStatus.total}. Processing ${url}`);
                     const config = { toMd: outputTypes.includes('md'), toDocx: outputTypes.includes('docx') };
-                    const result = await htmlTo(url, doc, projectTransformer, config, {});
+                    const result = await htmlTo(url, doc, projectTransformer, config, params);
                     const path = WebImporter.FileUtils.sanitizePath(result.path);
                     const docPath = `${documentPath(targetDir, path)}`;
                     const files = await saveOutput(docPath, outputTypes, result);
