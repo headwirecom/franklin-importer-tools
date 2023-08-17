@@ -1,20 +1,9 @@
 import fetch from 'node-fetch';
 import fs from 'fs';
+import { asJson } from './args.js'
 
-async function getEntries(url) {
-    if (url.startsWith('https://') || url.startsWith('http://')) {
-        const res = await fetch(url);
-        if (res.ok) {
-            const json = await res.json();
-            return json;
-        }
-    } else {
-        const f = fs.readFileSync(url);
-        const json = JSON.parse(f);
-        return json;
-    }
-    
-    return [];
+async function getEntries(arg) {
+    return await asJson(arg, 'urls');
 }
 
 export default getEntries;
