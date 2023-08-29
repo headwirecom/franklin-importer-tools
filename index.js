@@ -11,6 +11,7 @@ global.WebImporter = {
     FileUtils
 };
 
+global.JSDOM = JSDOM;
 global.window = new JSDOM('').window;
 global.document = global.window.document;
   
