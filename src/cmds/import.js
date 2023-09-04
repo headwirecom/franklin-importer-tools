@@ -4,6 +4,7 @@ import ExcelJS from 'exceljs';
 import Path from 'path';
 import fs from 'fs-extra';
 import { Utils, html2docx, html2md } from '@adobe/helix-importer';
+import ConcurrencyUtil from '../impl/ConcurrencyUtil.js'
 import getEntries from '../impl/entries.js';
 import { asJson } from '../impl/args.js'
 
@@ -46,6 +47,16 @@ const builder = {
         alias: 'p',
         description: 'parameters to pass to DOM trasformation script',
         default: '{}'
+    },
+    async: {
+        description: "number of documents to import asynchronously",
+        type: "number",
+        default: 1
+    },
+    asyncPause: {
+        description: "number of milliseconds to pause import before continueing asynchronous processing",
+        type: "number",
+        default: 200
     }
 };
 
@@ -162,13 +173,15 @@ const updateTimer = (importStatus) => {
     }
     importStatus.timeStr = timeStr;
 }
-
+{}
 const processUrl = async (url, importStatus) => {
+    // console.log(`${(importStatus.imported + 1)}/${importStatus.total}. Processing ${url}`);
     let outputTypes = importStatus.outputTypes;
     let targetDir = importStatus.targetDir;
     const resp = await fetch(url);
     if (resp.ok) {
         if (resp.redirected) {
+            importStatus.imported += 1;
             console.log(`${importStatus.imported}/${importStatus.total}. ${url} redirected`);
             importStatus.rows.push({
                 url,
@@ -180,13 +193,13 @@ const processUrl = async (url, importStatus) => {
                 const text = await resp.text();
                 const doc = new JSDOM(text).window.document;
                 fixLinks(url, doc, ['srcset', 'src']);
-                // console.log(`${importStatus.imported}/${importStatus.total}. Processing ${url}`);
                 const config = { toMd: outputTypes.includes('md'), toDocx: outputTypes.includes('docx') };
                 const result = await htmlTo(url, doc, importStatus.projectTransformer, config, importStatus.params);
                 const path = WebImporter.FileUtils.sanitizePath(result.path);
                 const docPath = `${documentPath(targetDir, path)}`;
                 const files = await saveOutput(docPath, outputTypes, result);
                 updateTimer(importStatus);
+                importStatus.imported += 1;
                 console.log(`${importStatus.imported}/${importStatus.total}. Imported ${url}. Elapsed time: ${importStatus.timeStr}`);
                 const report = (result.report) ? result.report : {};
                 Object.keys(report).forEach((key) => {
@@ -204,6 +217,7 @@ const processUrl = async (url, importStatus) => {
                     });
                 }
             } catch(error) {
+                importStatus.imported += 1;
                 console.error(error);
                 importStatus.rows.push({
                     url,
@@ -212,12 +226,22 @@ const processUrl = async (url, importStatus) => {
             }
         }
     } else {
+        importStatus.imported += 1;
         console.log(`${importStatus.imported}/${importStatus.total}. ${url} return status ${resp.status}`);
         importStatus.rows.push({
             url,
             status: `Invalid: ${resp.status}`,
         });
     }
+}
+
+const testFetch = async (url, importStatus, index, array) => {
+    let remaining = array.length;
+    const resp = await fetch(url);
+    importStatus.imported += 1;
+    updateTimer(importStatus);
+    importStatus.rows.push({ url, status: `${resp.status}`});
+    console.log(`(${index}/${remaining}) -> ${importStatus.imported}/${importStatus.total}. Test fetch ${url} return status ${resp.status}. Elapsed time: ${importStatus.timeStr}`);
 }
 
 const handler = async (argv) => {
@@ -229,6 +253,8 @@ const handler = async (argv) => {
     };
 
     const outputTypes = argv.type.split('|');
+    const concurrency = argv.async;
+    const delay = argv.asyncPause;
     validateOutputType(outputTypes);
     importStatus.outputTypes = outputTypes;
     importStatus.targetDir = absPath(argv.target);
@@ -239,21 +265,43 @@ const handler = async (argv) => {
     importStatus.params = (argv.params) ? await asJson(argv.params) : {};
     importStatus.total = entries.length;
     importStatus.startTime = Date.now();
-    await Utils.asyncForEach(entries, async (url, index) => {
-        importStatus.imported += 1;
+
+    const asyncCallback = async (url, status, index, array) => {
         try {
-            await processUrl(url, importStatus)
+            // await testFetch(url, status, index, array);
+            await processUrl(url, status)
         } catch(error) {
+            if (status.imported <= index) {
+                status.imported = index + 1;
+            }
             console.error(error);
             importStatus.rows.push({
                 url,
                 status: `Error: ${error.message}`
             });
         }
-    });
+    }
 
-    console.log('Done! Saving report.');
-    await saveReport(importStatus);
+    if (entries.length > 0) {
+        await ConcurrencyUtil.processAll(entries, asyncCallback, importStatus, concurrency, delay);
+        let waitCount = 0;
+        ConcurrencyUtil.waitFor(3000, () => { 
+            waitCount++;
+            if (importStatus.imported === importStatus.total || waitCount >= 100) {
+                // console.log(`${waitCount}) ${importStatus.imported}/${importStatus.total}`);
+                return true; 
+            }
+            return false;
+        }, 
+        async () => {
+            console.log('Saving report !');
+            await saveReport(importStatus);
+            updateTimer(importStatus);
+            console.log(`Done! Imported ${importStatus.imported} documents in ${importStatus.timeStr}`);
+        });
+    } 
+
+    // process.exit();
 };
 
 export default {
