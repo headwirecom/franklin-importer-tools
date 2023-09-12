@@ -1,7 +1,7 @@
 import fetch from 'node-fetch';
 import { JSDOM } from 'jsdom';
 import ExcelJS from 'exceljs';
-import Path from 'path';
+import Path, { resolve } from 'path';
 import fs from 'fs-extra';
 import { Utils, html2docx, html2md } from '@adobe/helix-importer';
 import ConcurrencyUtil from '../impl/ConcurrencyUtil.js'
@@ -174,8 +174,8 @@ const updateTimer = (importStatus) => {
     importStatus.timeStr = timeStr;
 }
 {}
-const processUrl = async (url, importStatus) => {
-    // console.log(`${(importStatus.imported + 1)}/${importStatus.total}. Processing ${url}`);
+const processUrl = async (url, importStatus, index) => {
+    // console.log(`${(index + 1)}/${importStatus.total}. Processing ${url}`);
     let outputTypes = importStatus.outputTypes;
     let targetDir = importStatus.targetDir;
     const resp = await fetch(url);
@@ -267,23 +267,34 @@ const handler = async (argv) => {
     importStatus.startTime = Date.now();
 
     const asyncCallback = async (url, status, index, array) => {
-        try {
-            // await testFetch(url, status, index, array);
-            await processUrl(url, status)
-        } catch(error) {
-            if (status.imported <= index) {
-                status.imported = index + 1;
+        return new Promise(async (resolve) => {
+            try {
+                // await testFetch(url, status, index, array);
+                await processUrl(url, status, index);
+            } catch(error) {
+                if (status.imported <= index) {
+                    status.imported = index + 1;
+                }
+                console.error(error);
+                importStatus.rows.push({
+                    url,
+                    status: `Error: ${error.message}`
+                });
             }
-            console.error(error);
-            importStatus.rows.push({
-                url,
-                status: `Error: ${error.message}`
-            });
-        }
+            resolve();
+        });
     }
 
     if (entries.length > 0) {
-        await ConcurrencyUtil.processAll(entries, asyncCallback, importStatus, concurrency, delay);
+        if (concurrency < 1) {
+            // async processing is off
+            console.log('async processing is off');
+            await Utils.asyncForEach(entries, async (url, index) => {
+                await processUrl(url, importStatus, index);
+            });
+        } else {
+            await ConcurrencyUtil.processAll(entries, asyncCallback, importStatus, concurrency, delay);
+        }
         let waitCount = 0;
         ConcurrencyUtil.waitFor(3000, () => { 
             waitCount++;
@@ -298,10 +309,9 @@ const handler = async (argv) => {
             await saveReport(importStatus);
             updateTimer(importStatus);
             console.log(`Done! Imported ${importStatus.imported} documents in ${importStatus.timeStr}`);
+            process.exit();
         });
     } 
-
-    // process.exit();
 };
 
 export default {
