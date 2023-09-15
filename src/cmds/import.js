@@ -173,7 +173,7 @@ const updateTimer = (importStatus) => {
     }
     importStatus.timeStr = timeStr;
 }
-{}
+
 const processUrl = async (url, importStatus, index) => {
     // console.log(`${(index + 1)}/${importStatus.total}. Processing ${url}`);
     let outputTypes = importStatus.outputTypes;
