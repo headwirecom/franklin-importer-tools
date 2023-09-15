@@ -16,20 +16,24 @@ export default class ConcurrencyUtil {
             for (let i = 0; i < concurrency && index < array.length; i += 1) {
               const next = array[index];
               try {
-                callback(next, options, index, array).then(() => { processed += 1; });
+                callback(next, options, index, array).then(() => { 
+                  processed += 1; 
+                }).catch((e) => {
+                  console.error(e);
+                  processed += 1; 
+                });
               } catch (e) {
                 console.error(e);
               }
               index++;
             }
+            console.log(`processing next ${index - processed}`);
           }
           
           if (processed >= index && index < array.length) {
             dequeue();
-            await ConcurrencyUtil.sleep(delay);
-          } else {
-            await ConcurrencyUtil.sleep(100);
           }
+          await ConcurrencyUtil.sleep(delay);
         }
       }
 
