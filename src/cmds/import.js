@@ -57,6 +57,14 @@ const builder = {
         description: "number of milliseconds to pause import before continueing asynchronous processing",
         type: "number",
         default: 200
+    },
+    start: {
+        description: "starting index to import from URL list",
+        type: "number"
+    },
+    end: {
+        description: "end index to import from URL list",
+        type: "number"
     }
 };
 
@@ -189,9 +197,11 @@ const processUrl = async (url, importStatus, index) => {
                 redirect: resp.url
             });
         } else {
+            let currentWindow = null;
             try {
                 const text = await resp.text();
-                const doc = new JSDOM(text).window.document;
+                currentWindow = new JSDOM(text).window;
+                const doc = currentWindow.document;
                 fixLinks(url, doc, ['srcset', 'src']);
                 const config = { toMd: outputTypes.includes('md'), toDocx: outputTypes.includes('docx') };
                 const result = await htmlTo(url, doc, importStatus.projectTransformer, config, importStatus.params);
@@ -223,6 +233,10 @@ const processUrl = async (url, importStatus, index) => {
                     url,
                     status: `Error: ${error.message}`
                 });
+            } finally {
+                if (currentWindow) {
+                    currentWindow.close();
+                }
             }
         }
     } else {
@@ -261,7 +275,7 @@ const handler = async (argv) => {
     fs.ensureDir(importStatus.targetDir);
     const tsPath = absPath(argv.transformScript);
     importStatus.projectTransformer = await import(tsPath);
-    const entries = await getEntries(argv.urls);
+    const entries = await getEntries(argv.urls, argv.start, argv.end);
     importStatus.params = (argv.params) ? await asJson(argv.params) : {};
     importStatus.total = entries.length;
     importStatus.startTime = Date.now();
@@ -286,6 +300,7 @@ const handler = async (argv) => {
     }
 
     if (entries.length > 0) {
+        console.profile();
         if (concurrency < 1) {
             // async processing is off
             console.log('async processing is off');
@@ -309,7 +324,8 @@ const handler = async (argv) => {
             await saveReport(importStatus);
             updateTimer(importStatus);
             console.log(`Done! Imported ${importStatus.imported} documents in ${importStatus.timeStr}`);
-            process.exit();
+            console.profileEnd();
+            // process.exit();
         });
     } 
 };
