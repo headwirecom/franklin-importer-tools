@@ -10,7 +10,7 @@ const command = 'upload';
 const desc = 'upload site content to Google Drive';
 
 // If modifying these scopes, delete token.json.
-const SCOPES = ['https://www.googleapis.com/auth/drive.file'];
+const SCOPES = ['https://www.googleapis.com/auth/drive'];
 const TOKEN_PATH = 'token.json';
 const OAUTH_REDIRECT_PORT = 3333;
 const OAUTH_REDIRECT_SERVER = `http://localhost:${OAUTH_REDIRECT_PORT}`;
@@ -81,6 +81,57 @@ function authorize(credentials, callback) {
     });
 }
 
+const asyncListFiles = async (drive, folderId, indent) => {
+    try {
+        const response = await drive.files.list({q: `'${folderId}' in parents`, fields: "files(id, name, mimeType, description)"});
+        let files = response.data.files;
+        if (files && files.length > 0) {
+            for (let i = 0; i < files.length; i++) {
+                if (files[i].mimeType === 'application/vnd.google-apps.folder') {
+                    // console.log(`${indent} + ${files[i].name} (${files[i].id})`);
+                    console.log(`${indent} + ${files[i].name}`);
+                    await asyncListFiles(drive, files[i].id, `  ${indent}`);
+                } else {
+                    // console.log(`${indent} ${files[i].name} (${files[i].id})`);
+                    console.log(`${indent} ${files[i].name}`);
+                }
+            }
+        } else {
+            console.log(`${indent} This folder is empty.`);
+        }
+    } catch (e) {
+        console.log(`unable to list files: ${e.message}`);
+        // console.error(e);
+    }
+}
+
+function listFiles(drive, folderId, indent) {
+    // console.log(`Listing files in ${folderId} folder.`);
+    drive.files.list({
+        q: `'${folderId}' in parents`,
+        fields: "files(id, name, mimeType, description)"
+    }).then(function(response) {
+        let files = response.data.files;
+        if (files && files.length > 0) {
+            for (let i = 0; i < files.length; i++) {
+                if (files[i].mimeType === 'application/vnd.google-apps.folder') {
+                    // console.log(`${indent} + ${files[i].name} (${files[i].id})`);
+                    console.log(`${indent} + ${files[i].name}`);
+                    listFiles(drive, files[i].id, `  ${indent}`);
+                } else {
+                    // console.log(`${indent} ${files[i].name} (${files[i].id})`);
+                    console.log(`${indent} ${files[i].name}`);
+                }
+            }
+        } else {
+            console.log(`${indent} This folder is empty.`);
+        }
+    }).catch((e) => {
+        console.log(`unable to list files: ${e.message}`);
+        // console.error(e);
+    });
+}
+
 const builder = {
     target: {
         alias: 't',
@@ -101,8 +152,10 @@ const builder = {
 
 const handler = async (argv) => {
     const credentials = await asJson(argv.credentials);
-    authorize(credentials, (oAuth2Client) => {
+    authorize(credentials, (auth) => {
         console.log(`Login Successful. Ready to upload to folder '${argv.target}'!`);
+        const drive = google.drive({ version: 'v3', auth });
+        asyncListFiles(drive, argv.target, '');
     });
 };
 
