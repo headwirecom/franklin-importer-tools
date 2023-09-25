@@ -7,17 +7,21 @@ import importCommand from './src/cmds/import.js';
 import uploadCommand from './src/cmds/upload.js';
 import fetch from 'node-fetch';
 
-global.WebImporter = {
-    Blocks,
-    DOMUtils,
-    FileUtils
-};
+const _command = process.argv.slice(2);
 
-global.JSDOM = JSDOM;
-global.window = new JSDOM('').window;
-global.document = global.window.document;
-global.fetch = fetch;
+if (_command[0] === 'import') {
+    global.WebImporter = {
+        Blocks,
+        DOMUtils,
+        FileUtils
+    };
+
+    global.JSDOM = JSDOM;
+    global.window = new JSDOM('').window;
+    global.document = global.window.document;
+    global.fetch = fetch;
+}
   
-await yargs(process.argv.slice(2))
+await yargs(_command)
     .command(importCommand)
     .command(uploadCommand).demandCommand(1).help().argv;
