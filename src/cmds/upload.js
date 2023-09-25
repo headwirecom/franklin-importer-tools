@@ -1,10 +1,11 @@
 import { asJson } from '../impl/args.js';
 import { google } from 'googleapis';
 import fs from 'fs';
+import Path, { resolve } from 'path';
 import express from 'express';
 import open from 'open';
-import  readline from 'readline';
-import exp from 'constants';
+import mime from 'mime-types';
+import { absPath } from '../impl/filesystem.js'
 
 const command = 'upload';
 const desc = 'upload site content to Google Drive';
@@ -81,6 +82,36 @@ function authorize(credentials, callback) {
     });
 }
 
+const listLocalFiles = (dirPath, callback) => {
+    const fullPath = absPath(dirPath);
+
+    fs.readdir(fullPath, (err, files) => {
+        if (err) {
+            console.error(`Unable to get file listing from ${dirPath}`, err);
+            return;
+        }
+
+        files.forEach((file) => {
+            const filePath = Path.join(fullPath, file);
+            // console.log(filePath);
+
+            fs.stat(filePath, (err, stats) => {
+                if (err) {
+                    console.error('Error getting file stats:', err);
+                    return;
+                }
+
+                if (stats.isDirectory()) {
+                    listLocalFiles(filePath, callback);
+                } else {
+                    callback(filePath);
+                }
+            });
+        }); 
+
+    });
+}
+
 const asyncListFiles = async (drive, folderId, indent) => {
     try {
         const response = await drive.files.list({q: `'${folderId}' in parents`, fields: "files(id, name, mimeType, description)"});
@@ -93,7 +124,27 @@ const asyncListFiles = async (drive, folderId, indent) => {
                     await asyncListFiles(drive, files[i].id, `  ${indent}`);
                 } else {
                     // console.log(`${indent} ${files[i].name} (${files[i].id})`);
-                    console.log(`${indent} ${files[i].name}`);
+                    console.log(`${indent} ${files[i].name} -> ${files[i].mimeType}`);
+                    /*
+                    if (files[i].name.endsWith('.docx')) {
+                        const fileName = files[i].name;
+                        const googleDocName = files[i].name.split('\.')[0];
+                        drive.files.copy({
+                            fileId: files[i].id,
+                            requestBody: {
+                                name: googleDocName,
+                                mimeType: "application/vnd.google-apps.document"
+                            }
+                        },
+                        (err, res) => {
+                            if (err) {
+                                console.error(`Unable to convert ${fileName} to google doc`, err);
+                            } else {
+                                console.log(JSON.stringify(res.data));
+                            }
+                        });
+                    }
+                    */
                 }
             }
         } else {
@@ -150,12 +201,69 @@ const builder = {
     }
 };
 
+const doUpload = async (drive, folderId, documentPath, pathParts) => {
+    const fileName = pathParts[pathParts.length-1];
+    const contentType = mime.lookup(fileName);
+    const googleDocName = fileName.split('\.')[0];
+    const metadata = {
+        name: fileName,
+        mimeType: contentType,
+        parents: [folderId] 
+    };
+
+    const stream = fs.createReadStream(documentPath);
+
+    try {
+        const resp = await drive.files.create({
+            requestBody: metadata,
+            media: {
+                name: fileName,
+                mimeType: contentType,
+                body: stream,
+            }
+        });
+        console.log(`Uploaded ${documentPath}. Google ID: ${resp.data.id}; Mime Type: ${resp.data.mimeType}`);
+
+        if (fileName.endsWith('.docx')) {
+            // convert to google doc
+            const docId = resp.data.id;
+            drive.files.copy({
+                fileId: docId,
+                requestBody: {
+                    name: googleDocName,
+                    mimeType: "application/vnd.google-apps.document"
+                }
+            },
+            (err, file) => {
+                if (err) {
+                    console.error(`Unable to convert ${fileName} to google doc`, err);
+                } else {
+                    console.log(`Google Document created: ${file.data.name}. Deleting uploaded ${fileName}`);
+                    drive.files.delete({fileId: docId});
+                }
+            });
+        }
+    } catch (err) {
+        console.error(`Unable to upload ${documentPath}`, err);
+    }
+}
+
 const handler = async (argv) => {
     const credentials = await asJson(argv.credentials);
-    authorize(credentials, (auth) => {
+    authorize(credentials, async (auth) => {
         console.log(`Login Successful. Ready to upload to folder '${argv.target}'!`);
         const drive = google.drive({ version: 'v3', auth });
-        asyncListFiles(drive, argv.target, '');
+
+        const source = absPath(argv.source);
+        let fileCount = 0;
+        listLocalFiles(source, async (filePath) => {
+            fileCount += 1;
+            const relPath = filePath.substring(source.length+1);
+            console.log(`${fileCount}. Uploading to Google Dive ${filePath}`);
+            await doUpload(drive, argv.target, filePath, relPath.split('/'));
+        });
+
+        // await asyncListFiles(drive, argv.target, '');
     });
 };
 
