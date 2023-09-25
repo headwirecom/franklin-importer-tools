@@ -65,6 +65,10 @@ const builder = {
     end: {
         description: "end index to import from URL list",
         type: "number"
+    },
+    report: {
+        description: "report name",
+        default: "import-report"
     }
 };
 
@@ -155,8 +159,8 @@ const buildReport = async (importStatus) => {
     return workbook.xlsx.writeBuffer();
 };
 
-const saveReport = async (importStatus) => {
-    const reportFilePath = Path.join(importStatus.targetDir,'import-report.xlsx');
+const saveReport = async (importStatus, name) => {
+    const reportFilePath = Path.join(importStatus.targetDir,`${name}.xlsx`);
     const blob = await buildReport(importStatus);
     await saveFile(reportFilePath, blob);
 };
@@ -269,6 +273,7 @@ const handler = async (argv) => {
     const outputTypes = argv.type.split('|');
     const concurrency = argv.async;
     const delay = argv.asyncPause;
+    const report = argv.report;
     validateOutputType(outputTypes);
     importStatus.outputTypes = outputTypes;
     importStatus.targetDir = absPath(argv.target);
@@ -321,7 +326,7 @@ const handler = async (argv) => {
         }, 
         async () => {
             console.log('Saving report !');
-            await saveReport(importStatus);
+            await saveReport(importStatus, report);
             updateTimer(importStatus);
             console.log(`Done! Imported ${importStatus.imported} documents in ${importStatus.timeStr}`);
             console.profileEnd();
