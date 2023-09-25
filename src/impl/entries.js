@@ -29,7 +29,7 @@ async function getEntries(arg, start, end) {
     const startIndex = checkStart(entries, start);
     const endIndex = checkEnd(entries, startIndex, end);
     if (startIndex > 0 || endIndex < entries.length) {
-        console.log(`process entries subset from ${startIndex} to ${endIndex}`);
+        console.log(`process entries subset from ${startIndex} to ${endIndex} of ${entries.length}`);
         entries = entries.slice(startIndex, endIndex);
     }
     return entries;
