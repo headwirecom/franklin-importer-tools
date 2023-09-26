@@ -114,10 +114,7 @@ const saveOutput = async (path, types, result) => {
     return savedFiles;
 }
 
-const buildReport = async (importStatus) => {
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Import Report');
-
+const writeReportWorksheet = (worksheet, importStatus) => {
     const headers = ['URL', 'path', 'file', 'status', 'redirect'].concat(importStatus.extraCols);
 
     // create Excel auto Filters for the first row / header
@@ -155,14 +152,29 @@ const buildReport = async (importStatus) => {
 
         return [url, path, file || '', status, redirect || ''].concat(extra);
     })));
+}
 
-    return workbook.xlsx.writeBuffer();
+const buildReport = async (importStatus, filePath) => {
+    const workbook = new ExcelJS.Workbook();
+    let worksheet = null;
+    if (fs.exists(filePath)) {
+        workbook.xlsx.readFile(filePath).then(() => {
+            worksheet = workbook.getWorksheet(1);
+            writeReportWorksheet(worksheet, importStatus);
+            workbook.xlsx.writeFile(filePath);
+        });
+    } else {
+        worksheet = workbook.addWorksheet('Import Report');
+        writeReportWorksheet(worksheet, importStatus);
+        workbook.xlsx.writeFile(filePath);
+    }
 };
 
 const saveReport = async (importStatus, name) => {
     const reportFilePath = Path.join(importStatus.targetDir,`${name}.xlsx`);
-    const blob = await buildReport(importStatus);
-    await saveFile(reportFilePath, blob);
+    await buildReport(importStatus, reportFilePath);
+    // const blob = await buildReport(importStatus);
+    //await saveFile(reportFilePath, blob);
 };
 
 const htmlTo = async (url, doc, projectTransformer, config, params) => {
