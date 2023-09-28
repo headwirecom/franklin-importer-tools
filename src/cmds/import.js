@@ -157,11 +157,13 @@ const writeReportWorksheet = (worksheet, importStatus) => {
 const buildReport = async (importStatus, filePath) => {
     const workbook = new ExcelJS.Workbook();
     let worksheet = null;
-    if (fs.exists(filePath)) {
+    if (fs.existsSync(filePath)) {
         workbook.xlsx.readFile(filePath).then(() => {
             worksheet = workbook.getWorksheet(1);
             writeReportWorksheet(worksheet, importStatus);
             workbook.xlsx.writeFile(filePath);
+        }).catch((error) => {
+            console.error(`Unable to save import report ${filePath}`, error);
         });
     } else {
         worksheet = workbook.addWorksheet('Import Report');
@@ -172,7 +174,11 @@ const buildReport = async (importStatus, filePath) => {
 
 const saveReport = async (importStatus, name) => {
     const reportFilePath = Path.join(importStatus.targetDir,`${name}.xlsx`);
-    await buildReport(importStatus, reportFilePath);
+    try {
+        await buildReport(importStatus, reportFilePath);
+    } catch (error) {
+        console.error(`Unable to save import report ${reportFilePath}`, error);
+    }
     // const blob = await buildReport(importStatus);
     //await saveFile(reportFilePath, blob);
 };
