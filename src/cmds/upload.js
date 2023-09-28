@@ -1,7 +1,7 @@
 import { asJson } from '../impl/args.js';
 import { google } from 'googleapis';
 import fs from 'fs';
-import Path, { resolve } from 'path';
+import Path from 'path';
 import express from 'express';
 import open from 'open';
 import mime from 'mime-types';
@@ -39,7 +39,7 @@ function getNewToken(oAuth2Client, callback) {
                 if (err) {
                     res.send('<html><h3>Authentication Code Not Received! You can close this window.</h3></html>');
                     server.close(() => { console.log('Auth server shutdown without receiving valid auth code'); });
-                    return console.error('Error retrieving access token', err);    
+                    return console.log('Error retrieving access token', err);    
                 }
 
                 res.send('<html><h3>Authentication Code Received! You can close this window.</h3></html>');
@@ -48,7 +48,7 @@ function getNewToken(oAuth2Client, callback) {
                 oAuth2Client.setCredentials(token);
                 // Store the token to disk for later program executions
                 fs.writeFile(TOKEN_PATH, JSON.stringify(token), (err) => {
-                if (err) return console.error(err);
+                if (err) return console.log(err);
                 console.log('Token stored to', TOKEN_PATH);
                 });
                 callback(oAuth2Client);
@@ -82,105 +82,56 @@ function authorize(credentials, callback) {
     });
 }
 
-const listLocalFiles = (dirPath, callback) => {
+const listLocalFiles = async (dirPath, callback) => {
     const fullPath = absPath(dirPath);
 
-    fs.readdir(fullPath, (err, files) => {
-        if (err) {
-            console.error(`Unable to get file listing from ${dirPath}`, err);
-            return;
-        }
-
-        files.forEach((file) => {
-            const filePath = Path.join(fullPath, file);
-            // console.log(filePath);
-
-            fs.stat(filePath, (err, stats) => {
-                if (err) {
-                    console.error('Error getting file stats:', err);
-                    return;
-                }
-
+    try {
+        const ls = fs.readdirSync(dirPath);
+        for (const file of ls) {
+            try {
+                const filePath = Path.join(dirPath, file);
+                const stats = fs.statSync(filePath);
                 if (stats.isDirectory()) {
-                    listLocalFiles(filePath, callback);
+                    await callback(filePath, true);
+                    await listLocalFiles(filePath, callback);
                 } else {
-                    callback(filePath);
+                    await callback(filePath, false);
                 }
-            });
-        }); 
-
-    });
+            } catch (err) {
+                console.log('Error getting file stats:', err);
+            }
+            
+        }
+    } catch (err) {
+        console.log(`Unable to get file listing from ${dirPath}`, err);
+    }
 }
 
-const asyncListFiles = async (drive, folderId, indent) => {
+const printRemoteFileListing = async (drive, folderId, indent) => {
     try {
-        const response = await drive.files.list({q: `'${folderId}' in parents`, fields: "files(id, name, mimeType, description)"});
+        const response = await drive.files.list({
+            q: `'${folderId}' in parents`, 
+            fields: "files(id, name, mimeType, size)"
+        });
         let files = response.data.files;
         if (files && files.length > 0) {
             for (let i = 0; i < files.length; i++) {
                 if (files[i].mimeType === 'application/vnd.google-apps.folder') {
                     // console.log(`${indent} + ${files[i].name} (${files[i].id})`);
                     console.log(`${indent} + ${files[i].name}`);
-                    await asyncListFiles(drive, files[i].id, `  ${indent}`);
+                    await printRemoteFileListing(drive, files[i].id, `  ${indent}`);
                 } else {
                     // console.log(`${indent} ${files[i].name} (${files[i].id})`);
-                    console.log(`${indent} ${files[i].name} -> ${files[i].mimeType}`);
-                    /*
-                    if (files[i].name.endsWith('.docx')) {
-                        const fileName = files[i].name;
-                        const googleDocName = files[i].name.split('\.')[0];
-                        drive.files.copy({
-                            fileId: files[i].id,
-                            requestBody: {
-                                name: googleDocName,
-                                mimeType: "application/vnd.google-apps.document"
-                            }
-                        },
-                        (err, res) => {
-                            if (err) {
-                                console.error(`Unable to convert ${fileName} to google doc`, err);
-                            } else {
-                                console.log(JSON.stringify(res.data));
-                            }
-                        });
-                    }
-                    */
+                    console.log(`${indent} ${files[i].name} (${files[i].size} bytes) -> ${files[i].mimeType}`);
+                    
                 }
             }
         } else {
             console.log(`${indent} This folder is empty.`);
         }
     } catch (e) {
-        console.log(`unable to list files: ${e.message}`);
-        // console.error(e);
+        console.log(`unable to list files: ${e.message}`, e);
     }
-}
-
-function listFiles(drive, folderId, indent) {
-    // console.log(`Listing files in ${folderId} folder.`);
-    drive.files.list({
-        q: `'${folderId}' in parents`,
-        fields: "files(id, name, mimeType, description)"
-    }).then(function(response) {
-        let files = response.data.files;
-        if (files && files.length > 0) {
-            for (let i = 0; i < files.length; i++) {
-                if (files[i].mimeType === 'application/vnd.google-apps.folder') {
-                    // console.log(`${indent} + ${files[i].name} (${files[i].id})`);
-                    console.log(`${indent} + ${files[i].name}`);
-                    listFiles(drive, files[i].id, `  ${indent}`);
-                } else {
-                    // console.log(`${indent} ${files[i].name} (${files[i].id})`);
-                    console.log(`${indent} ${files[i].name}`);
-                }
-            }
-        } else {
-            console.log(`${indent} This folder is empty.`);
-        }
-    }).catch((e) => {
-        console.log(`unable to list files: ${e.message}`);
-        // console.error(e);
-    });
 }
 
 const builder = {
@@ -198,17 +149,85 @@ const builder = {
         alias: 'c',
         describe: 'OAuth Client ID credentials (download JSON from Google Developer Console)',
         required: true
+    },
+    printTarget: {
+        alias: 'p',
+        describe: 'print folders and files structure on the destination Google Drive upon completion',
+        type: 'boolean',
+        default: false
     }
 };
 
-const doUpload = async (drive, folderId, documentPath, pathParts) => {
+const getFolderIdByName = async (drive, parentId, name) => {
+    const query = `'${parentId}' in parents and name = '${name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+    const response = await drive.files.list({
+        q: query,
+        fields: "files(id)"
+    });
+
+    if (response.data.files.length > 0) {
+        return response.data.files[0].id;
+    } else {
+        return null;
+    }
+} 
+
+const createFolder = async (drive, parentId, name) => {
+    const r = {
+        name: name,
+        mimeType: 'application/vnd.google-apps.folder',
+        parents: [parentId]
+    };
+
+    const response = await drive.files.create({
+        resource: r,
+        fields: 'id',
+    });
+
+    return response.data.id;
+}
+
+const folderIdCache = {};
+
+const getOrCreateFolderByPath = async (drive, parentId, pathParts) => {
+    let lastParentId = parentId;
+
+    for (const pathIndex in pathParts) {
+        const folderName = pathParts[pathIndex];
+        const relPath = pathParts.slice(0, pathIndex+1).join('/');
+        // console.log(`${relPath} getting folder id`);
+        
+        let folderId = (relPath in folderIdCache) ? folderIdCache[relPath] : null;
+        if(folderId) {
+            // console.log(`${relPath} found folder id in cache`);
+            lastParentId = folderId;
+            continue;
+        }
+
+        folderId = await getFolderIdByName(drive, lastParentId, folderName);
+        if (folderId) {
+            // console.log(`${relPath} found folder id on google drive`);
+            lastParentId = folderId;
+            folderIdCache[relPath] = lastParentId;
+        } else {
+            lastParentId = await createFolder(drive, lastParentId, folderName);
+            folderIdCache[relPath] = lastParentId;
+        }
+    }
+
+    return lastParentId;
+}
+
+const doUpload = async (drive, folderId, documentPath, pathParts, fileCount) => {
+    console.log(`${fileCount}. ${documentPath} uploading`);
     const fileName = pathParts[pathParts.length-1];
     const contentType = mime.lookup(fileName);
     const googleDocName = fileName.split('\.')[0];
+    const parentId = (pathParts.length > 1) ? await getOrCreateFolderByPath(drive, folderId, pathParts.slice(0, pathParts.length-1)) : folderId;
     const metadata = {
         name: fileName,
         mimeType: contentType,
-        parents: [folderId] 
+        parents: [parentId] 
     };
 
     const stream = fs.createReadStream(documentPath);
@@ -222,29 +241,31 @@ const doUpload = async (drive, folderId, documentPath, pathParts) => {
                 body: stream,
             }
         });
-        console.log(`Uploaded ${documentPath}. Google ID: ${resp.data.id}; Mime Type: ${resp.data.mimeType}`);
+        // console.log(`Uploaded ${documentPath}. Google ID: ${resp.data.id}; Mime Type: ${resp.data.mimeType}`);
 
         if (fileName.endsWith('.docx')) {
+            console.log(`   ${fileName} converting to google document '${googleDocName}'`);
             // convert to google doc
             const docId = resp.data.id;
             drive.files.copy({
                 fileId: docId,
                 requestBody: {
                     name: googleDocName,
-                    mimeType: "application/vnd.google-apps.document"
+                    mimeType: "application/vnd.google-apps.document",
+                    parents: [parentId]
                 }
             },
             (err, file) => {
                 if (err) {
-                    console.error(`Unable to convert ${fileName} to google doc`, err);
+                    console.log(` Unable to convert ${documentPath} to google doc`, err);
                 } else {
-                    console.log(`Google Document created: ${file.data.name}. Deleting uploaded ${fileName}`);
+                    // console.log(`Google Document created: ${file.data.name}. Deleting uploaded ${fileName}`);
                     drive.files.delete({fileId: docId});
                 }
             });
         }
     } catch (err) {
-        console.error(`Unable to upload ${documentPath}`, err);
+        console.log(`Unable to upload ${documentPath}`, err);
     }
 }
 
@@ -256,14 +277,21 @@ const handler = async (argv) => {
 
         const source = absPath(argv.source);
         let fileCount = 0;
-        listLocalFiles(source, async (filePath) => {
-            fileCount += 1;
+        await listLocalFiles(source, async (filePath, isDirectory) => {
             const relPath = filePath.substring(source.length+1);
-            console.log(`${fileCount}. Uploading to Google Dive ${filePath}`);
-            await doUpload(drive, argv.target, filePath, relPath.split('/'));
+            // console.log(`${fileCount}. Uploading to Google Dive ${filePath}`);
+            if (isDirectory) {
+                // pre-process folders
+                await getOrCreateFolderByPath(drive, argv.target, relPath.split('/'));
+            } else {
+                fileCount += 1;
+                await doUpload(drive, argv.target, filePath, relPath.split('/'), fileCount);
+            }
         });
 
-        // await asyncListFiles(drive, argv.target, '');
+        if (argv.printTarget) {
+            await printRemoteFileListing(drive, argv.target, '');
+        }
     });
 };
 
