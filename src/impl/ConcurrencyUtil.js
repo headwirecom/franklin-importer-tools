@@ -24,15 +24,14 @@ export default class ConcurrencyUtil {
                 });
               } catch (e) {
                 console.error(e);
+                processed += 1; 
               }
               index++;
             }
-            console.log(`processing next ${index - processed}`);
+            //console.log(`processing next ${index - processed}`);
           }
-          
-          if (processed >= index && index < array.length) {
-            dequeue();
-          }
+
+          dequeue();
           await ConcurrencyUtil.sleep(delay);
         }
       }
