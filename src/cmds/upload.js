@@ -191,12 +191,13 @@ const folderIdCache = {};
 
 const getOrCreateFolderByPath = async (drive, parentId, pathParts) => {
     let lastParentId = parentId;
+    let relPath = '';
 
     for (const pathIndex in pathParts) {
         const folderName = pathParts[pathIndex];
-        const relPath = pathParts.slice(0, pathIndex+1).join('/');
-        // console.log(`${relPath} getting folder id`);
-        
+        relPath = (pathIndex === '0') ? folderName : `${relPath}/${folderName}`;
+        // console.log(`${pathIndex}. ${folderName} in ${relPath} getting folder id`);
+      
         let folderId = (relPath in folderIdCache) ? folderIdCache[relPath] : null;
         if(folderId) {
             // console.log(`${relPath} found folder id in cache`);
@@ -286,7 +287,7 @@ const handler = async (argv) => {
         const source = absPath(argv.source);
         let fileCount = 0;
         await listLocalFiles(source, async (filePath, stats) => {
-            const relPath = filePath.substring(source.length+1);
+            const relPath = (source.endsWith('/')) ? filePath.substring(source.length) : filePath.substring(source.length+1);
             // console.log(`${fileCount}. Uploading to Google Dive ${filePath}`);
             if (stats.isDirectory()) {
                 // pre-process folders
