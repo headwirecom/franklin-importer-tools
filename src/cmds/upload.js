@@ -92,10 +92,10 @@ const listLocalFiles = async (dirPath, callback) => {
                 const filePath = Path.join(dirPath, file);
                 const stats = fs.statSync(filePath);
                 if (stats.isDirectory()) {
-                    await callback(filePath, true);
+                    await callback(filePath, stats);
                     await listLocalFiles(filePath, callback);
                 } else {
-                    await callback(filePath, false);
+                    await callback(filePath, stats);
                 }
             } catch (err) {
                 console.log('Error getting file stats:', err);
@@ -218,8 +218,15 @@ const getOrCreateFolderByPath = async (drive, parentId, pathParts) => {
     return lastParentId;
 }
 
-const doUpload = async (drive, folderId, documentPath, pathParts, fileCount) => {
-    console.log(`${fileCount}. ${documentPath} uploading`);
+const formatFileSize = (bytes, decimals = 2) => {
+    if (bytes === 0) return '0 MB';
+
+    const megabytes = (bytes / (1024 * 1024)).toFixed(decimals);
+    return `${megabytes} MB`;
+}
+
+const doUpload = async (drive, folderId, documentPath, pathParts, fileCount, fileSize) => {
+    console.log(`${fileCount}. ${documentPath} uploading ${formatFileSize(fileSize)}`);
     const fileName = pathParts[pathParts.length-1];
     const contentType = mime.lookup(fileName);
     const googleDocName = fileName.split('\.')[0];
@@ -227,6 +234,7 @@ const doUpload = async (drive, folderId, documentPath, pathParts, fileCount) => 
     const metadata = {
         name: fileName,
         mimeType: contentType,
+        fields: "files(id, name, mimeType, size)",
         parents: [parentId] 
     };
 
@@ -243,7 +251,7 @@ const doUpload = async (drive, folderId, documentPath, pathParts, fileCount) => 
         });
         // console.log(`Uploaded ${documentPath}. Google ID: ${resp.data.id}; Mime Type: ${resp.data.mimeType}`);
 
-        if (fileName.endsWith('.docx')) {
+        if (resp.data.mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
             console.log(`   ${fileName} converting to google document '${googleDocName}'`);
             // convert to google doc
             const docId = resp.data.id;
@@ -255,9 +263,9 @@ const doUpload = async (drive, folderId, documentPath, pathParts, fileCount) => 
                     parents: [parentId]
                 }
             },
-            (err, file) => {
+            async (err, file) => {
                 if (err) {
-                    console.log(` Unable to convert ${documentPath} to google doc`, err);
+                    console.log(` Unable to convert ${documentPath} to google doc: ${err.message}`);
                 } else {
                     // console.log(`Google Document created: ${file.data.name}. Deleting uploaded ${fileName}`);
                     drive.files.delete({fileId: docId});
@@ -277,15 +285,15 @@ const handler = async (argv) => {
 
         const source = absPath(argv.source);
         let fileCount = 0;
-        await listLocalFiles(source, async (filePath, isDirectory) => {
+        await listLocalFiles(source, async (filePath, stats) => {
             const relPath = filePath.substring(source.length+1);
             // console.log(`${fileCount}. Uploading to Google Dive ${filePath}`);
-            if (isDirectory) {
+            if (stats.isDirectory()) {
                 // pre-process folders
                 await getOrCreateFolderByPath(drive, argv.target, relPath.split('/'));
             } else {
                 fileCount += 1;
-                await doUpload(drive, argv.target, filePath, relPath.split('/'), fileCount);
+                await doUpload(drive, argv.target, filePath, relPath.split('/'), fileCount, stats.size);
             }
         });
 
