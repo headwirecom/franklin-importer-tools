@@ -197,7 +197,7 @@ const getOrCreateFolderByPath = async (drive, parentId, pathParts) => {
         const folderName = pathParts[pathIndex];
         relPath = (pathIndex === '0') ? folderName : `${relPath}/${folderName}`;
         // console.log(`${pathIndex}. ${folderName} in ${relPath} getting folder id`);
-        
+      
         let folderId = (relPath in folderIdCache) ? folderIdCache[relPath] : null;
         if(folderId) {
             // console.log(`${relPath} found folder id in cache`);
