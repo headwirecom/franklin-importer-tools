@@ -1,4 +1,4 @@
-import fetch from 'node-fetch';
+import fetch from '@adobe/node-fetch-retry';
 import fs from 'fs';
 import Path from 'path';
 

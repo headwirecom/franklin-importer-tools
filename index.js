@@ -5,7 +5,7 @@ import { JSDOM } from 'jsdom';
 import yargs from 'yargs';
 import importCommand from './src/cmds/import.js';
 import uploadCommand from './src/cmds/upload.js';
-import fetch from 'node-fetch';
+import fetch from '@adobe/node-fetch-retry';
 
 const _command = process.argv.slice(2);
 

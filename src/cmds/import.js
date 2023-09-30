@@ -1,4 +1,4 @@
-import fetch from 'node-fetch';
+import fetch from '@adobe/node-fetch-retry';
 import { JSDOM } from 'jsdom';
 import ExcelJS from 'exceljs';
 import Path, { resolve } from 'path';
