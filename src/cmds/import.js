@@ -1,4 +1,4 @@
-import fetch from 'node-fetch';
+import fetch from '@adobe/node-fetch-retry';
 import { JSDOM } from 'jsdom';
 import ExcelJS from 'exceljs';
 import Path, { resolve } from 'path';
@@ -57,6 +57,18 @@ const builder = {
         description: "number of milliseconds to pause import before continueing asynchronous processing",
         type: "number",
         default: 200
+    },
+    start: {
+        description: "starting index to import from URL list",
+        type: "number"
+    },
+    end: {
+        description: "end index to import from URL list",
+        type: "number"
+    },
+    report: {
+        description: "report name",
+        default: "import-report"
     }
 };
 
@@ -102,10 +114,7 @@ const saveOutput = async (path, types, result) => {
     return savedFiles;
 }
 
-const buildReport = async (importStatus) => {
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Import Report');
-
+const writeReportWorksheet = (worksheet, importStatus) => {
     const headers = ['URL', 'path', 'file', 'status', 'redirect'].concat(importStatus.extraCols);
 
     // create Excel auto Filters for the first row / header
@@ -143,14 +152,35 @@ const buildReport = async (importStatus) => {
 
         return [url, path, file || '', status, redirect || ''].concat(extra);
     })));
+}
 
-    return workbook.xlsx.writeBuffer();
+const buildReport = async (importStatus, filePath) => {
+    const workbook = new ExcelJS.Workbook();
+    let worksheet = null;
+    if (fs.existsSync(filePath)) {
+        workbook.xlsx.readFile(filePath).then(() => {
+            worksheet = workbook.getWorksheet(1);
+            writeReportWorksheet(worksheet, importStatus);
+            workbook.xlsx.writeFile(filePath);
+        }).catch((error) => {
+            console.error(`Unable to save import report ${filePath}`, error);
+        });
+    } else {
+        worksheet = workbook.addWorksheet('Import Report');
+        writeReportWorksheet(worksheet, importStatus);
+        workbook.xlsx.writeFile(filePath);
+    }
 };
 
-const saveReport = async (importStatus) => {
-    const reportFilePath = Path.join(importStatus.targetDir,'import-report.xlsx');
-    const blob = await buildReport(importStatus);
-    await saveFile(reportFilePath, blob);
+const saveReport = async (importStatus, name) => {
+    const reportFilePath = Path.join(importStatus.targetDir,`${name}.xlsx`);
+    try {
+        await buildReport(importStatus, reportFilePath);
+    } catch (error) {
+        console.error(`Unable to save import report ${reportFilePath}`, error);
+    }
+    // const blob = await buildReport(importStatus);
+    //await saveFile(reportFilePath, blob);
 };
 
 const htmlTo = async (url, doc, projectTransformer, config, params) => {
@@ -189,9 +219,11 @@ const processUrl = async (url, importStatus, index) => {
                 redirect: resp.url
             });
         } else {
+            let currentWindow = null;
             try {
                 const text = await resp.text();
-                const doc = new JSDOM(text).window.document;
+                currentWindow = new JSDOM(text).window;
+                const doc = currentWindow.document;
                 fixLinks(url, doc, ['srcset', 'src']);
                 const config = { toMd: outputTypes.includes('md'), toDocx: outputTypes.includes('docx') };
                 const result = await htmlTo(url, doc, importStatus.projectTransformer, config, importStatus.params);
@@ -223,6 +255,10 @@ const processUrl = async (url, importStatus, index) => {
                     url,
                     status: `Error: ${error.message}`
                 });
+            } finally {
+                if (currentWindow) {
+                    currentWindow.close();
+                }
             }
         }
     } else {
@@ -255,13 +291,14 @@ const handler = async (argv) => {
     const outputTypes = argv.type.split('|');
     const concurrency = argv.async;
     const delay = argv.asyncPause;
+    const report = argv.report;
     validateOutputType(outputTypes);
     importStatus.outputTypes = outputTypes;
     importStatus.targetDir = absPath(argv.target);
     fs.ensureDir(importStatus.targetDir);
     const tsPath = absPath(argv.transformScript);
     importStatus.projectTransformer = await import(tsPath);
-    const entries = await getEntries(argv.urls);
+    const entries = await getEntries(argv.urls, argv.start, argv.end);
     importStatus.params = (argv.params) ? await asJson(argv.params) : {};
     importStatus.total = entries.length;
     importStatus.startTime = Date.now();
@@ -286,6 +323,7 @@ const handler = async (argv) => {
     }
 
     if (entries.length > 0) {
+        console.profile();
         if (concurrency < 1) {
             // async processing is off
             console.log('async processing is off');
@@ -306,10 +344,11 @@ const handler = async (argv) => {
         }, 
         async () => {
             console.log('Saving report !');
-            await saveReport(importStatus);
+            await saveReport(importStatus, report);
             updateTimer(importStatus);
             console.log(`Done! Imported ${importStatus.imported} documents in ${importStatus.timeStr}`);
-            process.exit();
+            console.profileEnd();
+            // process.exit();
         });
     } 
 };
