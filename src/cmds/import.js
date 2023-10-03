@@ -5,8 +5,10 @@ import Path, { resolve } from 'path';
 import fs from 'fs-extra';
 import { Utils, html2docx, html2md } from '@adobe/helix-importer';
 import ConcurrencyUtil from '../impl/ConcurrencyUtil.js'
+import ReportUtil from '../impl/ReportUtil.js';
 import getEntries from '../impl/entries.js';
 import { asJson } from '../impl/args.js'
+import { absPath } from '../impl/filesystem.js'
 
 function fixLinks(url, document, attrNames) {
     const protocol = new URL(url).protocol;
@@ -83,16 +85,6 @@ const validateOutputType = (types) => {
     }
 }
 
-const absPath = (path) => {
-    if (path.startsWith('/')) {
-        return path;
-    } else {
-        const cwd = process.cwd();
-        const absPath = Path.join(process.cwd(), path);
-        return absPath;
-    }
-};
-
 const documentPath = (targetDir, docPath) => {
     return Path.join(targetDir, docPath);
 }
@@ -114,73 +106,8 @@ const saveOutput = async (path, types, result) => {
     return savedFiles;
 }
 
-const writeReportWorksheet = (worksheet, importStatus) => {
-    const headers = ['URL', 'path', 'file', 'status', 'redirect'].concat(importStatus.extraCols);
-
-    // create Excel auto Filters for the first row / header
-    worksheet.autoFilter = {
-        from: 'A1',
-        to: `${String.fromCharCode(65 + headers.length - 1)}1`, // 65 = 'A'...
-    };
-
-    worksheet.addRows([
-        headers,
-    ].concat(importStatus.rows.map((row) => {
-        const {
-            url, path, file, status, redirect, report,
-        } = row;
-        const extra = [];
-        if (report) {
-            importStatus.extraCols.forEach((col) => {
-                const e = report[col];
-                if (e) {
-                    if (typeof e === 'string') {
-                        if (e.startsWith('=')) {
-                            extra.push({
-                                formula: report[col].replace(/=/, '_xlfn.'),
-                                value: '', // cannot compute a default value
-                            });
-                        } else {
-                            extra.push(report[col]);
-                        }
-                    } else {
-                        extra.push(JSON.stringify(report[col]));
-                    }
-                }
-            });
-        }
-
-        return [url, path, file || '', status, redirect || ''].concat(extra);
-    })));
-}
-
-const buildReport = async (importStatus, filePath) => {
-    const workbook = new ExcelJS.Workbook();
-    let worksheet = null;
-    if (fs.existsSync(filePath)) {
-        workbook.xlsx.readFile(filePath).then(() => {
-            worksheet = workbook.getWorksheet(1);
-            writeReportWorksheet(worksheet, importStatus);
-            workbook.xlsx.writeFile(filePath);
-        }).catch((error) => {
-            console.error(`Unable to save import report ${filePath}`, error);
-        });
-    } else {
-        worksheet = workbook.addWorksheet('Import Report');
-        writeReportWorksheet(worksheet, importStatus);
-        workbook.xlsx.writeFile(filePath);
-    }
-};
-
 const saveReport = async (importStatus, name) => {
-    const reportFilePath = Path.join(importStatus.targetDir,`${name}.xlsx`);
-    try {
-        await buildReport(importStatus, reportFilePath);
-    } catch (error) {
-        console.error(`Unable to save import report ${reportFilePath}`, error);
-    }
-    // const blob = await buildReport(importStatus);
-    //await saveFile(reportFilePath, blob);
+    await ReportUtil.saveReport(importStatus, importStatus.targetDir, name);
 };
 
 const htmlTo = async (url, doc, projectTransformer, config, params) => {
