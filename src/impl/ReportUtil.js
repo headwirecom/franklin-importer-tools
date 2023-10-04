@@ -14,9 +14,21 @@ const writeReportWorksheet = (worksheet, reporStatus, defaultHeaders) => {
     worksheet.addRows([
         headers,
     ].concat(reporStatus.rows.map((row) => {
+        /*
         const {
             url, path, file, status, redirect, report,
         } = row;
+        */
+        const fields = [];
+        defaultHeaders.forEach((key) => {
+            const e = row[key];
+            if (e) {
+                fields.push(e);
+            } else {
+                fields.push('');
+            }
+        });
+        const report = row['report'];
         const extra = [];
         if (report) {
             reporStatus.extraCols.forEach((col) => {
@@ -38,7 +50,7 @@ const writeReportWorksheet = (worksheet, reporStatus, defaultHeaders) => {
             });
         }
 
-        return [url, path, file || '', status, redirect || ''].concat(extra);
+        return fields.concat(extra);
     })));
 }
 
