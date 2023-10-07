@@ -8,32 +8,37 @@ export default class ConcurrencyUtil {
      * @param {number} concurrency - number of objects to iterate asynchronously
      * @param {number} delay - number of milliseconds to delay processing after making a number of async calls specified by concurrency argument
      */
-    static async processAll(array, callback, options = {}, concurrency = 1, delay = 200) {
+    static async processAll(array, callback, options = {}, concurrency = 1, delay = 200, processCurrentBeforContinue = false) {
         let index = 0;
         let processed = 0;
-        while (index < array.length) {
-          const dequeue = async () => {
-            for (let i = 0; i < concurrency && index < array.length; i += 1) {
-              const next = array[index];
-              try {
-                callback(next, options, index, array).then(() => { 
-                  processed += 1; 
-                }).catch((e) => {
+        return new Promise(async (resolve) => {
+          while (index < array.length) {
+            const dequeue = async () => {
+              for (let i = 0; i < concurrency && index < array.length; i += 1) {
+                const next = array[index];
+                try {
+                  callback(next, options, index, array).then(() => { 
+                    processed += 1; 
+                  }).catch((e) => {
+                    console.error(e);
+                    processed += 1; 
+                  });
+                } catch (e) {
                   console.error(e);
                   processed += 1; 
-                });
-              } catch (e) {
-                console.error(e);
-                processed += 1; 
+                }
+                index++;
               }
-              index++;
+              //console.log(`processing next ${index - processed}`);
             }
-            //console.log(`processing next ${index - processed}`);
-          }
 
-          dequeue();
-          await ConcurrencyUtil.sleep(delay);
-        }
+            if (!processCurrentBeforContinue || processed === index) {
+              dequeue();
+            }
+            await ConcurrencyUtil.sleep(delay);
+          }
+          resolve();
+        });
       }
 
       static async sleep(delay) {
