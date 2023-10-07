@@ -7,6 +7,9 @@ import open from 'open';
 import mime from 'mime-types';
 import { absPath } from '../impl/filesystem.js'
 import ReportUtil from '../impl/ReportUtil.js';
+import ConcurrencyUtil from '../impl/ConcurrencyUtil.js';
+
+let drive = null;
 
 const command = 'upload';
 const desc = 'upload site content to Google Drive';
@@ -16,6 +19,8 @@ const SCOPES = ['https://www.googleapis.com/auth/drive'];
 const TOKEN_PATH = 'token.json';
 const OAUTH_REDIRECT_PORT = 3333;
 const OAUTH_REDIRECT_SERVER = `http://localhost:${OAUTH_REDIRECT_PORT}`;
+
+const RATE_LIMIT_ERR = 'User rate limit';
 
 const uploadStatus = {
     rows: []
@@ -91,6 +96,28 @@ function authorize(credentials, callback) {
     });
 }
 
+const hasFiles = (dirPath) => {
+    try {
+        const ls = fs.readdirSync(dirPath);
+        for (const file of ls) {
+            // skip macOS specific files and upload report 
+            if (file === '.DS_Store' || file === 'upload-report.xlsx' || file === 'import-report.xlsx') continue;
+            try {
+                const filePath = Path.join(dirPath, file);
+                const stat = fs.statSync(filePath);
+                if (stat.isFile()) {
+                    return true;
+                }
+            } catch (err) {
+                console.log('Error getting file stats:', err);
+            }
+        }
+    } catch (err) {
+        console.log(`Unable to get file listing from ${dirPath}`, err);
+    }
+    return false;
+}
+
 const listLocalFiles = async (dirPath, callback) => {
     const fullPath = absPath(dirPath);
 
@@ -105,7 +132,7 @@ const listLocalFiles = async (dirPath, callback) => {
                 if (stats.isDirectory()) {
                     await callback(filePath, stats);
                     await listLocalFiles(filePath, callback);
-                } else {
+                } else if (stats.isFile()) {
                     await callback(filePath, stats);
                 }
             } catch (err) {
@@ -128,9 +155,10 @@ const updateTimer = () => {
       }
     }
     uploadStatus.timeStr = timeStr;
+    return uploadStatus.timeStr;
 }
 
-const printRemoteFileListing = async (drive, folderId, indent) => {
+const printRemoteFileListing = async (folderId, indent) => {
     try {
         const response = await drive.files.list({
             q: `'${folderId}' in parents`, 
@@ -142,7 +170,7 @@ const printRemoteFileListing = async (drive, folderId, indent) => {
                 if (files[i].mimeType === 'application/vnd.google-apps.folder') {
                     // console.log(`${indent} + ${files[i].name} (${files[i].id})`);
                     console.log(`${indent} + ${files[i].name}`);
-                    await printRemoteFileListing(drive, files[i].id, `  ${indent}`);
+                    await printRemoteFileListing(files[i].id, `  ${indent}`);
                 } else {
                     // console.log(`${indent} ${files[i].name} (${files[i].id})`);
                     console.log(`${indent} ${files[i].name} (${files[i].size} bytes) -> ${files[i].mimeType}`);
@@ -173,6 +201,11 @@ const builder = {
         describe: 'OAuth Client ID credentials (download JSON from Google Developer Console)',
         required: true
     },
+    async: {
+        description: "number of documents to upload asynchronously",
+        type: "number",
+        default: 10
+    },
     printTarget: {
         alias: 'p',
         describe: 'print folders and files structure on the destination Google Drive upon completion',
@@ -181,7 +214,7 @@ const builder = {
     }
 };
 
-const getFolderIdByName = async (drive, parentId, name) => {
+const getFolderIdByName = async (parentId, name) => {
     const query = `'${parentId}' in parents and name = '${name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
     const response = await drive.files.list({
         q: query,
@@ -195,7 +228,28 @@ const getFolderIdByName = async (drive, parentId, name) => {
     }
 } 
 
-const createFolder = async (drive, parentId, name) => {
+const isRateLimitError = (err) => {
+    return (err && err.message.includes(RATE_LIMIT_ERR));
+}
+
+const backoff = (call, onSuccess, onError, exponent = 0, retry = 0, maxRetries = 20) => {
+    const delay = (exponent > 0) ? Math.min((Math.pow(2, exponent) + Math.random() * 1000), 64000) : 1;
+    setTimeout(async () => {
+        try {
+            const resp = await call();
+            onSuccess(resp);
+        } catch(err) {
+            if (isRateLimitError(err) && retry <= maxRetries) {
+                // console.log('back off retry', err);
+                backoff(call, onSuccess, onError, exponent + 1, retry + 1, maxRetries);
+            } else {
+                onError(err);
+            }
+        }
+    }, delay);
+}
+
+const createFolder = async (parentId, name) => {
     const r = {
         name: name,
         mimeType: 'application/vnd.google-apps.folder',
@@ -212,7 +266,7 @@ const createFolder = async (drive, parentId, name) => {
 
 const folderIdCache = {};
 
-const getOrCreateFolderByPath = async (drive, parentId, pathParts) => {
+const getOrCreateFolderByPath = async (parentId, pathParts) => {
     let lastParentId = parentId;
     let relPath = '';
 
@@ -228,13 +282,13 @@ const getOrCreateFolderByPath = async (drive, parentId, pathParts) => {
             continue;
         }
 
-        folderId = await getFolderIdByName(drive, lastParentId, folderName);
+        folderId = await getFolderIdByName(lastParentId, folderName);
         if (folderId) {
             // console.log(`${relPath} found folder id on google drive`);
             lastParentId = folderId;
             folderIdCache[relPath] = lastParentId;
         } else {
-            lastParentId = await createFolder(drive, lastParentId, folderName);
+            lastParentId = await createFolder(lastParentId, folderName);
             folderIdCache[relPath] = lastParentId;
         }
     }
@@ -246,25 +300,84 @@ const formatFileSize = (bytes, decimals = 2) => {
     if (bytes === 0) return '0 MB';
 
     const megabytes = (bytes / (1024 * 1024)).toFixed(decimals);
+    if (megabytes > 1024) {
+        const gigabytes = (megabytes / 1024).toFixed(decimals);
+        return `${gigabytes} GB`;
+    }
     return `${megabytes} MB`;
 }
 
-const doUpload = async (drive, folderId, documentPath, pathParts, fileSize) => {
-    const fileName = pathParts[pathParts.length-1];
+const tryToDeleteDocument = (id) => {
+    drive.files.delete({fileId: id}, (err) => {
+        if (isRateLimitError(err)) {
+            backoff(async () => {
+                await drive.files.delete({fileId: id});
+            }, 
+            () => { console.log(`Document '${id}' deleted on retry.`); }, 
+            (err) => { console.log(`Document '${id}' not deleted on retry. ${err.message}`); });
+        }
+    });
+}
+
+const tryToConvertDocument = async (folderId, docId, fileName, path, fileSize) => {
+    const source = uploadStatus.sourceDir;
+    const relPath = (source.endsWith('/')) ? path.substring(source.length) : path.substring(source.length+1);
+    const googleDocName = fileName.split('\.')[0];
+    const callback = async () => {
+        // const stack = new Error();
+        // console.log(`callback to convert ${fileName}`, stack);
+        const resp = await drive.files.copy({
+            fileId: docId,
+            requestBody: {
+                name: googleDocName,
+                mimeType: "application/vnd.google-apps.document",
+                parents: [folderId]
+            }
+        });
+        return resp;
+    }
+
+    const p = new Promise(async (resolve) => { 
+        backoff(
+            callback, 
+            (resp) => { 
+                console.log(`Document ${fileName} (${fileSize}) with Google ID '${docId}' converted. Time ${updateTimer()}.`); 
+                tryToDeleteDocument(docId);
+                report(relPath, 'success', fileSize);
+                uploadStatus.processing -= 1;
+                resolve();
+            }, (err) => {
+                const msg = `Unable to convert '${fileName}' (${fileSize}). ${err.message}. Time ${updateTimer()}.`;
+                console.log(msg);
+                report(relPath, 'error', fileSize, msg);
+                uploadStatus.processing -= 1;
+                resolve();
+            });
+    });
+
+    return p;
+}
+
+const isFileTooLarge = (bytes) =>{
+    // Documents larger than 100 MB always fail to convert
+    const megabytes = (bytes / (1024 * 1024)).toFixed(2);
+    return megabytes > 100;
+}
+
+const tryToUploadDocument = (folderId, path, fileName, fileSize) => {
+    const source = uploadStatus.sourceDir;
+    const relPath = (source.endsWith('/')) ? path.substring(source.length) : path.substring(source.length+1);
     const formatedSize = formatFileSize(fileSize);
     const contentType = mime.lookup(fileName);
-    const googleDocName = fileName.split('\.')[0];
-    const parentId = (pathParts.length > 1) ? await getOrCreateFolderByPath(drive, folderId, pathParts.slice(0, pathParts.length-1)) : folderId;
     const metadata = {
         name: fileName,
         mimeType: contentType,
         fields: "files(id, name, mimeType, size)",
-        parents: [parentId] 
+        parents: [folderId] 
     };
-
-    const stream = fs.createReadStream(documentPath);
-
-    try {
+    
+    const callback = async () => {
+        const stream = fs.createReadStream(path);
         const resp = await drive.files.create({
             requestBody: metadata,
             media: {
@@ -273,50 +386,70 @@ const doUpload = async (drive, folderId, documentPath, pathParts, fileSize) => {
                 body: stream,
             }
         });
-
-        updateTimer();
-        console.log(`${uploadStatus.fileCount}. ${documentPath} uploaded ${formatedSize}. Time ${uploadStatus.timeStr}.`);
-
-        if (resp.data.mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-            console.log(`${fileName} converting to google document '${googleDocName}'`);
-            // convert to google doc
-            const docId = resp.data.id;
-            drive.files.copy({
-                fileId: docId,
-                requestBody: {
-                    name: googleDocName,
-                    mimeType: "application/vnd.google-apps.document",
-                    parents: [parentId]
-                }
-            },
-            async (err, file) => {
-                if (err) {
-                    const msg = `Unable to convert ${documentPath} to google doc: ${err.message}`;
-                    console.log(msg);
-                    report(documentPath, 'unable to convert', formatedSize, msg);
-                } else {
-                    // console.log(`Google Document created: ${file.data.name}. Deleting uploaded ${fileName}`);
-                    drive.files.delete({fileId: docId});
-                    updateTimer();
-                    report(documentPath, 'success', formatedSize);
-                }
-                uploadStatus.processing -= 1; 
-            });
-        } else {
-            report(documentPath, 'success', formatedSize);
-            uploadStatus.processing -= 1; 
-        }
-    } catch (err) {
-        console.log(`Unable to upload ${documentPath}`, err);
-        report(documentPath, 'upload error', formatFileSize, `Unable to upload ${documentPath}: `);
-        uploadStatus.processing -= 1;
+        return resp;
     }
+
+    const p = new Promise(async (resolve) => { 
+        backoff(
+            callback, 
+            (resp) => { 
+                console.log(`Uploaded document ${path} (${formatedSize}). Time ${updateTimer()}.`); 
+                if (resp.data.mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+                    if (!isFileTooLarge(fileSize)) {
+                        console.log(`${fileName} converting to google document`);
+                        // convert to google doc
+                        const docId = resp.data.id;
+                        tryToConvertDocument(folderId, docId, fileName, path, formatedSize).then(() => {
+                            resolve();
+                        });
+                    } else {
+                        const msg = `${formatedSize} too large to convert to google document`;
+                        console.log(`${path} - ${msg}`);
+                        report(relPath, 'error', formatedSize, msg);
+                        uploadStatus.processing -= 1;
+                        resolve();
+                    }
+                } else {
+                    report(relPath, 'success', formatedSize);
+                    uploadStatus.processing -= 1;
+                    resolve();
+                }
+            }, 
+            (err) => {
+                console.log(`Unable to upload ${path} (${formatedSize}). ${err.message}. Time ${updateTimer()}.`);
+                report(relPath, 'error', formatedSize, `Unable to upload: ${err.message}`);
+                uploadStatus.processing -= 1;
+                resolve();
+            });
+    });
+
+    return p;
+}
+
+const doUpload = async (folderId, documentPath, pathParts, fileSize) => {
+    const fileName = pathParts[pathParts.length-1];
+    const formatedSize = formatFileSize(fileSize);
+    const parentId = (pathParts.length > 1) ? await getOrCreateFolderByPath(folderId, pathParts.slice(0, pathParts.length-1)) : folderId;
+    
+    try {
+        await tryToUploadDocument(parentId, documentPath, fileName, fileSize);
+    } catch (err) {
+        console.log(`Unable to upload document ${documentPath}. Time ${updateTimer()}.`, err);
+        report(documentPath, 'error', formatedSize, `Unable to upload: ${err.message}`);
+    }
+
+    uploadStatus.fileCount += 1;
+    console.log(`${uploadStatus.fileCount}. ${documentPath} (${formatedSize}) finished. Time ${updateTimer()}.`);  
 }
 
 const finish = async () => {
     if (uploadStatus.processing > 0) {
         setTimeout(finish, 500);
     } else {
+        if (uploadStatus.printTarget) {
+            await printRemoteFileListing(argv.target, '');
+        }
+        console.log(`Saving upload report. Time ${updateTimer()}`);
         await ReportUtil.saveReport(uploadStatus, uploadStatus.sourceDir, 'upload-report', 'Upload Report', ['path', 'status', 'fileSize', 'message']);
         updateTimer();
         console.log(`Uploaded ${uploadStatus.fileCount} files in ${uploadStatus.timeStr}.`);
@@ -327,32 +460,52 @@ const handler = async (argv) => {
     const credentials = await asJson(argv.credentials);
     authorize(credentials, async (auth) => {
         console.log(`Login Successful. Ready to upload to folder '${argv.target}'!`);
-        const drive = google.drive({ version: 'v3', auth });
+        drive = google.drive({ version: 'v3', auth });
 
         const source = absPath(argv.source);
         uploadStatus.startTime = Date.now();
         uploadStatus.fileCount = 0;
+        uploadStatus.totalSizeUpload = 0;
         uploadStatus.processing = 0; 
         uploadStatus.sourceDir = source;
+        uploadStatus.printTarget = argv.printTarget
+
+        const entries = [];
+
+        console.log('Scanning directories and files to upload. Creating Google Drive folder structure.');
         await listLocalFiles(source, async (filePath, stats) => {
             const relPath = (source.endsWith('/')) ? filePath.substring(source.length) : filePath.substring(source.length+1);
-            // console.log(`${fileCount}. Uploading to Google Dive ${filePath}`);
-            if (stats.isDirectory()) {
-                // pre-process folders
-                console.log(`preprocessing ${relPath}`);
-                await getOrCreateFolderByPath(drive, argv.target, relPath.split('/'));
-            } else {
-                uploadStatus.fileCount += 1;
-                uploadStatus.processing += 1; 
-                await doUpload(drive, argv.target, filePath, relPath.split('/'), stats.size);
+            if (stats.isFile()) {
+                uploadStatus.totalSizeUpload = uploadStatus.totalSizeUpload + stats.size;
+                entries.push(filePath)
+            } else if (stats.isDirectory() && hasFiles(filePath)) {
+                await getOrCreateFolderByPath(argv.target, relPath.split('/'));
+                console.log(`Google Folder ${relPath} created. Time ${updateTimer()}`);
             }
         });
 
-        if (argv.printTarget) {
-            await printRemoteFileListing(drive, argv.target, '');
-        }
+        const totalSizeFormatted = formatFileSize(uploadStatus.totalSizeUpload);
+        console.log(`Uploading ${entries.length}. Total data to upload ${totalSizeFormatted}.`);
 
-        finish();
+        if (entries.length > 0) {
+            const asyncCallback = async (filePath, options, index, array) => {
+                return new Promise(async (resolve) => {
+                    try {
+                        const relPath = (source.endsWith('/')) ? filePath.substring(source.length) : filePath.substring(source.length+1);
+                        let stat = fs.statSync(filePath);
+                        console.log(`${index+1}/${entries.length}. Uploading ${filePath} ${formatFileSize(stat.size)}`)
+                        uploadStatus.processing += 1;
+                        await doUpload(argv.target, filePath, relPath.split('/'), stat.size);
+                    } catch(err) {
+                        console.log(`Unable to upload ${filePath}.`, err);
+                        report(filePath, 'error', 0, `Unable to upload ${filePath}. ${err.message}`);
+                    }
+                    resolve();
+                });
+            }
+
+            ConcurrencyUtil.processAll(entries, asyncCallback, {}, argv.async, 3000, true).then(() => finish());
+        }
     });
 };
 
