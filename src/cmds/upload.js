@@ -8,8 +8,10 @@ import mime from 'mime-types';
 import { absPath } from '../impl/filesystem.js'
 import ReportUtil from '../impl/ReportUtil.js';
 import ConcurrencyUtil from '../impl/ConcurrencyUtil.js';
+import DriveAPI from '../impl/DriveAPI.js';
 
 let drive = null;
+let driveAPI = null; 
 
 const command = 'upload';
 const desc = 'upload site content to Google Drive';
@@ -183,45 +185,21 @@ const updateTimer = () => {
     return uploadStatus.timeStr;
 }
 
-const scanRemoteFilesListing = async (folderId, fullPath, callback) => {
-    try {
-        const response = await drive.files.list({
-            q: `'${folderId}' in parents and trashed = false`, 
-            fields: "files(id, name, mimeType, size, parents)"
-        });
-        let files = response.data.files;
-        if (files && files.length > 0) {
-            for (let i = 0; i < files.length; i++) {
-                const path = (fullPath.length > 0) ? `${fullPath}/${files[i].name}` : `${files[i].name}`
-                if (files[i].mimeType === 'application/vnd.google-apps.folder') {
-                    await scanRemoteFilesListing(files[i].id, path, callback);
-                } else {
-                    await callback(files[i], path);
-                }
-            }
-        } else {
-            console.log(`${fullPath} empty folder`);
-        }
-    } catch (e) {
-        console.log(`unable to list files: ${e.message}`, e);
-    }
-}
-
 const printRemoteFileListing = async (folderId) => {
-    await scanRemoteFilesListing(folderId, '', async (file, path) => {
+    await driveAPI.scanFiles(folderId, async (file, path) => {
         console.log(`${path} (${formatFileSize(file.size)}) -> ${file.mimeType}`);
-    });
+    }, true);
 }
 
 const convertToGoogleDocsScan = async (folderId) => {
-    await scanRemoteFilesListing(folderId, '', async (file, path) => {
+    await driveAPI(folderId, async (file, path) => {
         if (file.mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
             console.log(`${path} (${formatFileSize(file.size)}) -> ${file.mimeType}`);
             const folderId = file.parents[0];
             uploadStatus.processing += 1;
             await tryToConvertDocument(folderId, file.id, file.name, path, formatFileSize(file.size));
         }
-    });
+    }, true);
 }
 
 const builder = {
@@ -626,10 +604,10 @@ const finish = async () => {
 }
 
 const handler = async (argv) => {
-    const credentials = await asJson(argv.credentials);
-    authorize(credentials, async (auth) => {
-        console.log(`Login Successful. Ready to upload to folder '${argv.target}'!`);
-        drive = google.drive({ version: 'v3', auth });
+    driveAPI = new DriveAPI();
+    driveAPI.init(argv.credentials, async (driveObj) => {
+        console.log(`Ready to upload to folder '${argv.target}'!`);
+        drive = driveObj;
 
         const source = absPath(argv.source);
         uploadStatus.mode = checkMode(argv);
