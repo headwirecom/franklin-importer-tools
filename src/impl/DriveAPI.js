@@ -2,6 +2,8 @@ import { google } from 'googleapis';
 import { asJson } from '../impl/args.js';
 import fs from 'fs';
 import { resolve } from 'path';
+import express from 'express';
+import open from 'open';
 
 let drive = null;
 
@@ -125,8 +127,6 @@ export default class DriveAPI {
                         await callback(files[i], currentPath);
                     }
                 }
-            } else if (path.length === 0) {
-                console.log(`${currentPath} empty folder`);
             }
         } catch (e) {
             console.log(`unable to list files in folder ${path}. Folder id ${folderId}: ${e.message}`, e);
