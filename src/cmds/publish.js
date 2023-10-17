@@ -41,7 +41,7 @@ function logApiResponse(path, text) {
     let statusTxt = '{ ';
     for (let key of Object.keys(json)) {
       if (json[key].status && key !== 'links') {
-        statusTxt = statusTxt + `${key} status: ${json[key].status} `;
+        statusTxt = statusTxt + `${key} status: ${json[key].status}; `;
       }
     }
     statusTxt = statusTxt + '}';
@@ -172,10 +172,10 @@ const handler = async (argv) => {
     }, true, context);
 
     
-        console.log(`Publishing ${urls.length}.`);
-        processAsync([...urls], options).then(() => {
-            console.log(`Finished publishing ${counter} documents in ${updateTimer()}. Failed ${errorCount}.`);
-        });
+    console.log(`Publishing ${urls.length}.`);
+    processAsync([...urls], options).then(() => {
+        console.log(`Finished "${op}" operation on ${counter} documents in ${updateTimer()}. Failed ${errorCount}.`);
+    });
 }
 
 export default {
