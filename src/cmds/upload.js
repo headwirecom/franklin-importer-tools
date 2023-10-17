@@ -118,8 +118,10 @@ const updateTimer = () => {
 }
 
 const printRemoteFileListing = async (folderId) => {
+    let count = 0;
     await driveAPI.scanFiles(folderId, async (file, path) => {
-        console.log(`${path} (${formatFileSize(file.size)}) -> ${file.mimeType}`);
+        count += 1;
+        console.log(`${count}. ${path} (${formatFileSize(file.size)}) -> ${file.mimeType}`);
     }, true);
 }
 
