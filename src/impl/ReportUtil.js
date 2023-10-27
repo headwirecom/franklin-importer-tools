@@ -2,7 +2,7 @@ import ExcelJS from 'exceljs';
 import Path, { resolve } from 'path';
 import fs from 'fs-extra';
 
-const writeReportWorksheet = (worksheet, reporStatus, defaultHeaders) => {
+const writeReportWorksheet = (worksheet, reporStatus, defaultHeaders, addHeaderRow = true) => {
     const headers = [...defaultHeaders].concat(reporStatus.extraCols);
 
     // create Excel auto Filters for the first row / header
@@ -11,9 +11,9 @@ const writeReportWorksheet = (worksheet, reporStatus, defaultHeaders) => {
         to: `${String.fromCharCode(65 + headers.length - 1)}1`, // 65 = 'A'...
     };
 
-    worksheet.addRows([
-        headers,
-    ].concat(reporStatus.rows.map((row) => {
+    const rows = (addHeaderRow) ? [headers] : [];
+
+    worksheet.addRows(rows.concat(reporStatus.rows.map((row) => {
         /*
         const {
             url, path, file, status, redirect, report,
@@ -63,7 +63,7 @@ const buildReport = async (reporStatus, filePath, worksheetName, defaultHeaders,
             if (!worksheet) {
                 worksheet = workbook.addWorksheet(worksheetName);
             }
-            writeReportWorksheet(worksheet, reporStatus, defaultHeaders);
+            writeReportWorksheet(worksheet, reporStatus, defaultHeaders, false);
             workbook.xlsx.writeFile(filePath);
         }).catch((error) => {
             console.error(`Unable to save ${worksheetName} report ${filePath}`, error);
