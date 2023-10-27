@@ -165,7 +165,7 @@ const builder = {
     },
     mode: {
         alias: 'm',
-        describe: `Upload modes that specifies how to handle existing files on google ${JSON.stringify(MODE_VALUES)}.
+        describe: `Upload mode that specifies how to handle existing files on google ${JSON.stringify(MODE_VALUES)}.
             Upload Modes: ${JSON.stringify(MODE_DESCRIPTION, null, 2)} \n`,
         default: `${MODE_VALUES[0]}`
     },
