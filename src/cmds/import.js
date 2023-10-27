@@ -141,7 +141,7 @@ const processUrl = async (url, importStatus, index) => {
             importStatus.imported += 1;
             console.log(`${importStatus.imported}/${importStatus.total}. ${url} redirected`);
             importStatus.rows.push({
-                url,
+                'URL': url,
                 status: 'Redirect',
                 redirect: resp.url
             });
@@ -168,7 +168,7 @@ const processUrl = async (url, importStatus, index) => {
                 });
                 for (let file of files) {
                     importStatus.rows.push({
-                        url,
+                        'URL': url,
                         status: 'Success',
                         path: docPath,
                         file,
@@ -179,7 +179,7 @@ const processUrl = async (url, importStatus, index) => {
                 importStatus.imported += 1;
                 console.error(error);
                 importStatus.rows.push({
-                    url,
+                    'URL': url,
                     status: `Error: ${error.message}`
                 });
             } finally {
@@ -192,7 +192,7 @@ const processUrl = async (url, importStatus, index) => {
         importStatus.imported += 1;
         console.log(`${importStatus.imported}/${importStatus.total}. ${url} return status ${resp.status}`);
         importStatus.rows.push({
-            url,
+            'URL': url,
             status: `Invalid: ${resp.status}`,
         });
     }
@@ -203,7 +203,7 @@ const testFetch = async (url, importStatus, index, array) => {
     const resp = await fetch(url);
     importStatus.imported += 1;
     updateTimer(importStatus);
-    importStatus.rows.push({ url, status: `${resp.status}`});
+    importStatus.rows.push({ 'URL': url, status: `${resp.status}`});
     console.log(`(${index}/${remaining}) -> ${importStatus.imported}/${importStatus.total}. Test fetch ${url} return status ${resp.status}. Elapsed time: ${importStatus.timeStr}`);
 }
 
@@ -241,7 +241,7 @@ const handler = async (argv) => {
                 }
                 console.error(error);
                 importStatus.rows.push({
-                    url,
+                    'URL': url,
                     status: `Error: ${error.message}`
                 });
             }
@@ -258,7 +258,7 @@ const handler = async (argv) => {
                 await processUrl(url, importStatus, index);
             });
         } else {
-            await ConcurrencyUtil.processAll(entries, asyncCallback, importStatus, concurrency, delay);
+            await ConcurrencyUtil.processAll(entries, asyncCallback, importStatus, concurrency, delay, true);
         }
         let waitCount = 0;
         ConcurrencyUtil.waitFor(3000, () => { 
