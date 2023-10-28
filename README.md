@@ -7,6 +7,11 @@ Clone this project and run `npm install`.
 
 ### Supported Operations - Get Help 
 
+Get URLs (from sitemap) to import:
+```
+./index.js urls --help
+```
+
 Document import:
 ```
 ./index.js import --help
@@ -21,6 +26,18 @@ Publishing and Indexing (via Franklin Admin API)
 ```
 ./index.js publish --help
 ```   
+
+## Get URLs
+
+```
+./index.js urls --help
+```
+
+Example - get a list of URLs and save to a file as JSON:
+```
+./index.js urls -s https://www.golfdigest.golf-prod.sports.aws.discovery.com/sitemaps/sitemap_golfdigest_index.xml -o urls.json
+```
+
 
 ## Import Usage and Examples
 
