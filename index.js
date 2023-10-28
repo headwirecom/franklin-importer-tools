@@ -6,6 +6,7 @@ import yargs from 'yargs';
 import importCommand from './src/cmds/import.js';
 import uploadCommand from './src/cmds/upload.js';
 import publishCommand from './src/cmds/publish.js';
+import urlsCommand from './src/cmds/urls.js';
 import fetch from '@adobe/node-fetch-retry';
 
 const _command = process.argv.slice(2);
@@ -26,4 +27,5 @@ if (_command[0] === 'import') {
 await yargs(_command)
     .command(importCommand)
     .command(uploadCommand)
-    .command(publishCommand).demandCommand(1).help().argv;
+    .command(publishCommand)
+    .command(urlsCommand).demandCommand(1).help().argv;
