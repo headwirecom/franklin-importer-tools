@@ -250,7 +250,7 @@ const handler = async (argv) => {
     }
 
     if (entries.length > 0) {
-        console.profile();
+        // console.profile();
         if (concurrency < 1) {
             // async processing is off
             console.log('async processing is off');
@@ -274,7 +274,7 @@ const handler = async (argv) => {
             await saveReport(importStatus, report);
             updateTimer(importStatus);
             console.log(`Done! Imported ${importStatus.imported} documents in ${importStatus.timeStr}`);
-            console.profileEnd();
+            // console.profileEnd();
             // process.exit();
         });
     } 

@@ -36,7 +36,7 @@ const MODE_DESCRIPTION = [
     { name: 'keepRemote', descriptoin: 'Upload only if a file with the same name does not exist on Google Drive.' },
     { name: 'overwrite', descriptoin: 'Delete Google Drive file before uploading if it has the same name.' },
     { name: 'overwriteOlder', descriptoin: 'Delete Google Drive file before uploading if it has the same name and has modifiedTime older than local.' },
-    { name: 'convert', descriptoin: 'Convert Word documents found on Google drive to Googl Docs if they have already been uploaded.' },
+    { name: 'convert', descriptoin: 'Convert Word documents found on Google drive to Googl Docs if they have not already been converted.' },
     { name: 'scanonly', descriptoin: 'Scan to estimate number of files and total size of upload' }
 ];
 
@@ -126,7 +126,7 @@ const printRemoteFileListing = async (folderId) => {
 }
 
 const convertToGoogleDocsScan = async (folderId) => {
-    await driveAPI(folderId, async (file, path) => {
+    await driveAPI.scanFiles(folderId, async (file, path) => {
         if (file.mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
             console.log(`${path} (${formatFileSize(file.size)}) -> ${file.mimeType}`);
             const folderId = file.parents[0];
