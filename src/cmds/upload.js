@@ -125,15 +125,36 @@ const printRemoteFileListing = async (folderId) => {
     }, true);
 }
 
-const convertToGoogleDocsScan = async (folderId) => {
+const convertToGoogleDocsScan = async (folderId, concurrency) => {
+    const callback = async (entry) => {
+        const file = entry.file;
+        const path = entry.path;
+        const parentFolderId = entry.file.parents[0];
+        uploadStatus.processing += 1;
+        console.log(`${path} (${formatFileSize(file.size)}) -> ${file.mimeType}`);
+        await tryToConvertDocument(parentFolderId, file.id, file.name, path, formatFileSize(file.size));
+    }
+
+    let entries = [];
     await driveAPI.scanFiles(folderId, async (file, path) => {
         if (file.mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-            console.log(`${path} (${formatFileSize(file.size)}) -> ${file.mimeType}`);
-            const folderId = file.parents[0];
-            uploadStatus.processing += 1;
-            await tryToConvertDocument(folderId, file.id, file.name, path, formatFileSize(file.size));
+            if (concurrency && concurrency > 1) {
+                entries.push({file, path});
+            } else {
+                await callback({file, path})
+            }
+        }
+
+        if (entries.length > 1000) {
+            await ConcurrencyUtil.processAll(entries, callback, {}, concurrency, 3000, true);
+            entries = [];
         }
     }, true);
+
+    if (entries.length > 0) {
+        await ConcurrencyUtil.processAll(entries, callback, {}, concurrency, 3000, true);
+        entries = [];
+    }
 }
 
 const builder = {
@@ -194,7 +215,7 @@ const backoff = (call, onSuccess, onError, exponent = 0, retry = 0, maxRetries =
     setTimeout(async () => {
         try {
             const resp = await call();
-            onSuccess(resp);
+            await onSuccess(resp);
         } catch(err) {
             // retry Google rate limit errors and network timeouts
             if ((isRateLimitError(err) || err.message.includes('connect ETIMEDOUT')) && retry <= maxRetries) {
@@ -321,10 +342,11 @@ const tryToConvertDocument = async (folderId, docId, fileName, path, fileSize) =
 
     const p = new Promise(async (resolve) => { 
         backoff(
-            callback, 
-            (resp) => { 
-                console.log(`Document ${fileName} (${fileSize}) with Google ID '${docId}' converted. Time ${updateTimer()}.`); 
-                tryToDeleteDocument(docId);
+            callback,
+            async (resp) => {
+                console.log(`Document ${fileName} (${fileSize}) with Google ID '${docId}' converted. Time ${updateTimer()}.`);
+                await tryToDeleteDocument(docId);
+                console.log(`Document ${fileName} (${fileSize}) deleted from Google Drive`);
                 report(relPath, 'success', fileSize);
                 uploadStatus.processing -= 1;
                 resolve();
@@ -571,7 +593,7 @@ const handler = async (argv) => {
 
         if (uploadStatus.mode === MODES.convert) {
             console.log('Conveting Google Drive files to Google Documents.');
-            await convertToGoogleDocsScan(argv.target);
+            await convertToGoogleDocsScan(argv.target, argv.async);
             finish();
         } else if (entries.length > 0 && uploadStatus.mode !== MODES.scanonly) {
             const asyncCallback = async (filePath, options, index, array) => {
