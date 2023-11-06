@@ -28,15 +28,17 @@ const MODES = {
     overwrite: 'overwrite', 
     overwriteOlder: 'overwriteOlder',
     convert: 'convert',
+    cleanup: 'cleanup',
     scanonly: 'scanonly'
 };
-const MODE_VALUES = ['uploadAll', 'keepRemote', 'overwrite', 'overwriteOlder', 'convert', 'scanonly'];
+const MODE_VALUES = ['uploadAll', 'keepRemote', 'overwrite', 'overwriteOlder', 'convert', 'cleanup', 'scanonly'];
 const MODE_DESCRIPTION = [
     { name: 'uploadAll', descriptoin: 'Upload all files without checking. This will create duploacate files on Google Drive if files with the same name exist.' },
     { name: 'keepRemote', descriptoin: 'Upload only if a file with the same name does not exist on Google Drive.' },
     { name: 'overwrite', descriptoin: 'Delete Google Drive file before uploading if it has the same name.' },
     { name: 'overwriteOlder', descriptoin: 'Delete Google Drive file before uploading if it has the same name and has modifiedTime older than local.' },
     { name: 'convert', descriptoin: 'Convert Word documents found on Google drive to Googl Docs if they have not already been converted.' },
+    { name: 'cleanup', descriptoin: 'Delete Word documents found on Google drive to Googl Docs if they have already been converted.' },
     { name: 'scanonly', descriptoin: 'Scan to estimate number of files and total size of upload' }
 ];
 
@@ -125,12 +127,52 @@ const printRemoteFileListing = async (folderId) => {
     }, true);
 }
 
+const cleanupScan = async (folderId, concurrency) => {
+    const callback = async (entry) => {
+        const file = entry.file;
+        const path = entry.path;
+        const parentFolderId = entry.file.parents[0];
+        const docId = file.id;
+        uploadStatus.processing += 1;
+        uploadStatus.fileCount += 1;
+        console.log(`Deleting document ${path} (${formatFileSize(file.size)}) -> ${file.mimeType}`);
+        await tryToDeleteDocument(docId, path);
+    }
+
+    let entries = [];
+    await driveAPI.scanFiles(folderId, async (file, path) => {
+        if (file.mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+            const pathParts = path.split('/');
+            const fileName = pathParts[pathParts.length-1];
+            const googleDocs = await getGoogleFilesByName(folderId, fileName.split('.')[0], 'application/vnd.google-apps.document')
+            if (googleDocs && googleDocs.length > 0) {
+                if (concurrency && concurrency > 1) {
+                    entries.push({file, path});
+                } else {
+                    await callback({file, path})
+                }
+            }
+        }
+
+        if (entries.length > 1000) {
+            await ConcurrencyUtil.processAll(entries, callback, {}, concurrency, 3000, true);
+            entries = [];
+        }
+    }, true);
+
+    if (entries.length > 0) {
+        await ConcurrencyUtil.processAll(entries, callback, {}, concurrency, 3000, true);
+        entries = [];
+    }
+}
+
 const convertToGoogleDocsScan = async (folderId, concurrency) => {
     const callback = async (entry) => {
         const file = entry.file;
         const path = entry.path;
         const parentFolderId = entry.file.parents[0];
         uploadStatus.processing += 1;
+        uploadStatus.fileCount += 1;
         console.log(`${path} (${formatFileSize(file.size)}) -> ${file.mimeType}`);
         await tryToConvertDocument(parentFolderId, file.id, file.name, path, formatFileSize(file.size));
     }
@@ -228,8 +270,9 @@ const backoff = (call, onSuccess, onError, exponent = 0, retry = 0, maxRetries =
     }, delay);
 }
 
-const getGoogleFilesByName = (folderId, fileName) => {
-    const query = `'${folderId}' in parents and name = '${fileName}' and mimeType != 'application/vnd.google-apps.folder' and trashed = false`; 
+const getGoogleFilesByName = (folderId, fileName, mimeType) => {
+    const isType = (mimeType) ? `mimeType = '${mimeType}'` : `mimeType != 'application/vnd.google-apps.folder'`;
+    const query = `'${folderId}' in parents and name = '${fileName}' and ${isType} and trashed = false`; 
 
     const callback = async () => {
         const resp = await drive.files.list({
@@ -310,7 +353,7 @@ const formatFileSize = (bytes, decimals = 2) => {
     return `${megabytes} MB`;
 }
 
-const tryToDeleteDocument = async (id) => {
+const tryToDeleteDocument = async (id, name = '') => {
     await drive.files.delete({fileId: id}, (err) => {
         if (isRateLimitError(err)) {
             backoff(async () => {
@@ -318,6 +361,8 @@ const tryToDeleteDocument = async (id) => {
             }, 
             () => { console.log(`Document '${id}' deleted on retry.`); }, 
             (err) => { console.log(`Document '${id}' not deleted on retry. ${err.message}`); });
+        } else if (err) {
+            console.log(`Document ${name} '${id}' unable to delete. ${err.message}`);
         }
     });
 }
@@ -340,13 +385,12 @@ const tryToConvertDocument = async (folderId, docId, fileName, path, fileSize) =
         return resp;
     }
 
-    const p = new Promise(async (resolve) => { 
+    const p = new Promise(async (resolve, reject) => { 
         backoff(
             callback,
             async (resp) => {
                 console.log(`Document ${fileName} (${fileSize}) with Google ID '${docId}' converted. Time ${updateTimer()}.`);
-                await tryToDeleteDocument(docId);
-                console.log(`Document ${fileName} (${fileSize}) deleted from Google Drive`);
+                await tryToDeleteDocument(docId, relPath);
                 report(relPath, 'success', fileSize);
                 uploadStatus.processing -= 1;
                 resolve();
@@ -576,13 +620,17 @@ const handler = async (argv) => {
 
         const entries = [];
 
-        console.log('Scanning directories and files to upload. Creating Google Drive folder structure.');
+        console.log('Scanning directories and files.');
+        if (uploadStatus.mode !== MODES.scanonly && uploadStatus.mode !== MODES.convert && uploadStatus.mode !== MODES.cleanup) { 
+            console.log('Creating Google Drive folder structure.');
+        }
+
         await listLocalFiles(source, async (filePath, stats) => {
             const relPath = (source.endsWith('/')) ? filePath.substring(source.length) : filePath.substring(source.length+1);
             if (stats.isFile()) {
                 uploadStatus.totalSizeUpload = uploadStatus.totalSizeUpload + stats.size;
                 entries.push(filePath)
-            } else if (uploadStatus.mode !== MODES.scanonly && uploadStatus.mode !== MODES.convert && stats.isDirectory() && hasFiles(filePath)) {
+            } else if (uploadStatus.mode !== MODES.scanonly && uploadStatus.mode !== MODES.convert && uploadStatus.mode !== MODES.cleanup && stats.isDirectory() && hasFiles(filePath)) {
                 await getOrCreateFolderByPath(argv.target, relPath.split('/'));
                 console.log(`Google Folder ${relPath} created. Time ${updateTimer()}`);
             }
@@ -591,9 +639,19 @@ const handler = async (argv) => {
         const totalSizeFormatted = formatFileSize(uploadStatus.totalSizeUpload);
         console.log(`${entries.length} to upload. Total data to upload ${totalSizeFormatted}.`);
 
-        if (uploadStatus.mode === MODES.convert) {
+        if (uploadStatus.mode === MODES.cleanup) {
+            await cleanupScan(argv.target, argv.async);
+            if (uploadStatus.printTarget) {
+                console.log('Printing Google Drive file listing.');
+                await printRemoteFileListing(argv.target);
+            }
+        } else if (uploadStatus.mode === MODES.convert) {
             console.log('Conveting Google Drive files to Google Documents.');
             await convertToGoogleDocsScan(argv.target, argv.async);
+            if (uploadStatus.printTarget) {
+                console.log('Printing Google Drive file listing.');
+                await printRemoteFileListing(argv.target);
+            }
             finish();
         } else if (entries.length > 0 && uploadStatus.mode !== MODES.scanonly) {
             const asyncCallback = async (filePath, options, index, array) => {
