@@ -131,26 +131,26 @@ const cleanupScan = async (folderId, concurrency) => {
     const callback = async (entry) => {
         const file = entry.file;
         const path = entry.path;
-        const parentFolderId = entry.file.parents[0];
+        const fileName = file.name;
+        const parentFolderId = file.parents[0];
         const docId = file.id;
         uploadStatus.processing += 1;
         uploadStatus.fileCount += 1;
+        const googleDocs = await getGoogleFilesByName(parentFolderId, fileName.split('.')[0], 'application/vnd.google-apps.document');
         console.log(`Deleting document ${path} (${formatFileSize(file.size)}) -> ${file.mimeType}`);
-        await tryToDeleteDocument(docId, path);
+        if (googleDocs && googleDocs.length > 0) {
+            await tryToDeleteDocument(docId, path);
+        }
     }
 
     let entries = [];
     await driveAPI.scanFiles(folderId, async (file, path) => {
         if (file.mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-            const pathParts = path.split('/');
-            const fileName = pathParts[pathParts.length-1];
-            const googleDocs = await getGoogleFilesByName(folderId, fileName.split('.')[0], 'application/vnd.google-apps.document')
-            if (googleDocs && googleDocs.length > 0) {
-                if (concurrency && concurrency > 1) {
-                    entries.push({file, path});
-                } else {
-                    await callback({file, path})
-                }
+            console.log(`${path} (${formatFileSize(file.size)})`);
+            if (concurrency && concurrency > 1) {
+                entries.push({file, path});
+            } else {
+                await callback({file, path})
             }
         }
 
