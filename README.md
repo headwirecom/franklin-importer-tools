@@ -43,6 +43,11 @@ Example - project specific url mapping
 ./index.js urls -s https://www.golfdigest.com/sitemaps/sitemap_golfdigest_index.xml --mappingScript longurlmapping.js
 ```
 
+Example - using lastmod date
+```
+./index.js urls -s https://www.golfdigest.com/sitemaps/sitemap_golfdigest_index.xml -t 2023-10-01T09:00:00-00:00
+```
+
 ### URL mapping script example - extracting long path from data attribute
 ```javascript
 import fetch from '@adobe/node-fetch-retry';
