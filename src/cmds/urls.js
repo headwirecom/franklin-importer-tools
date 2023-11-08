@@ -1,10 +1,10 @@
 import fetch from '@adobe/node-fetch-retry';
 import { JSDOM } from 'jsdom';
-import { resolve } from 'path';
 import zlib from 'zlib';
 import fs from 'fs';
-import { asJson } from '../impl/args.js'
-import { absPath } from '../impl/filesystem.js'
+import { asJson, tryJSON } from '../impl/args.js';
+import { absPath } from '../impl/filesystem.js';
+import ConcurrencyUtil from '../impl/ConcurrencyUtil.js';
 
 let totalCounter = 0;
 let startTime = Date.now();
@@ -65,14 +65,14 @@ const parseSitemap = async (sitemap, callback, timeFilter) => {
         await fetchSitemap(url, callback, timeFilter);
     }
 
-    for(const el of links) {
+    await ConcurrencyUtil.processAll(links, async (el) => {
         const loc = el.querySelector('loc').childNodes[0].nodeValue;
         const lastmod = el.querySelector('lastmod').childNodes[0].nodeValue;
         const pass = (timeFilter) ? new Date(lastmod).getTime() > timeFilter.getTime() : true; 
         if (pass) {
             await callback(loc);
         }
-    }
+    }, {}, 10, 1000, true);
 }
 
 const command = 'urls';
@@ -144,7 +144,14 @@ const handler = async (argv) => {
 
             if (filePath) {
                 if (isJsonOut) {
-                    fs.appendFileSync(filePath, `"${mappedPath}"\n`);
+                    if (totalCounter > 0) {
+                        fs.appendFileSync(filePath, ',\n');
+                    }
+                    if (tryJSON(mappedPath)) {
+                        fs.appendFileSync(filePath, `${mappedPath}`);
+                    } else {
+                        fs.appendFileSync(filePath, `"${mappedPath}"`);
+                    }
                 } else {
                     fs.appendFileSync(filePath, `${mappedPath}\n`);
                 }
