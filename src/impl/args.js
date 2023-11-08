@@ -42,5 +42,6 @@ async function asJson(arg, argName) {
 }
 
 export {
-    asJson
+    asJson,
+    tryJSON
 }
