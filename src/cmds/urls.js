@@ -1,10 +1,10 @@
 import fetch from '@adobe/node-fetch-retry';
 import { JSDOM } from 'jsdom';
-import { resolve } from 'path';
 import zlib from 'zlib';
 import fs from 'fs';
-import { asJson } from '../impl/args.js'
-import { absPath } from '../impl/filesystem.js'
+import { asJson, tryJSON } from '../impl/args.js';
+import { absPath } from '../impl/filesystem.js';
+import ConcurrencyUtil from '../impl/ConcurrencyUtil.js';
 
 let totalCounter = 0;
 let startTime = Date.now();
@@ -36,7 +36,7 @@ const decompress = async (blob) => {
     });
 }
 
-const fetchSitemap = async (path, callback) => {
+const fetchSitemap = async (path, callback, timeFilter) => {
     const resp = await fetch(path);
     if (!resp.ok) {
         return null;
@@ -46,14 +46,14 @@ const fetchSitemap = async (path, callback) => {
         const blob = await resp.blob();
         const buf = await blob.arrayBuffer()
         const text = await decompress(buf);
-        await parseSitemap(text, callback);
+        await parseSitemap(text, callback, timeFilter);
     } else {
         const text = await resp.text();
-        await parseSitemap(text, callback);
+        await parseSitemap(text, callback, timeFilter);
     }
 }
 
-const parseSitemap = async (sitemap, callback) => {
+const parseSitemap = async (sitemap, callback, timeFilter) => {
     const text = sitemap;
 
     const doc = new JSDOM(text).window.document;
@@ -62,14 +62,17 @@ const parseSitemap = async (sitemap, callback) => {
 
     for(const sitemap of sitemaps) {
         const url = sitemap.querySelector('loc').childNodes[0].nodeValue;
-        await fetchSitemap(url, callback);
+        await fetchSitemap(url, callback, timeFilter);
     }
 
-    for(const el of links) {
+    await ConcurrencyUtil.processAll(links, async (el) => {
         const loc = el.querySelector('loc').childNodes[0].nodeValue;
-        const url = new URL(loc);
-        await callback(loc);
-    }
+        const lastmod = el.querySelector('lastmod').childNodes[0].nodeValue;
+        const pass = (timeFilter) ? new Date(lastmod).getTime() > timeFilter.getTime() : true; 
+        if (pass) {
+            await callback(loc);
+        }
+    }, {}, 10, 1000, true);
 }
 
 const command = 'urls';
@@ -90,7 +93,11 @@ const builder = {
                     The script should implement a single map(url, params) method and return a mapped URL.`
     },
     mappingScriptParams: {
-        describe: "Custom parameters to pass to project specific mapping script."
+        describe: 'Custom parameters to pass to project specific mapping script.'
+    },
+    lastmod: {
+        alias: 't',
+        describe: 'The last modified date filer. This is compared to lastmod date in the sitemap.'
     }
 }
 
@@ -124,18 +131,27 @@ const handler = async (argv) => {
             }
         }
 
+        const timeFilter = (argv.lastmod) ? new Date(argv.lastmod) : null;
         startTime = Date.now();
         await fetchSitemap(sitemapURL, async (path) => {
             const url = new URL(path);
 
             let mappedPath = `${url.protocol}//${hostname}${url.pathname}`;
+
             if (mappingScript) {
                 mappedPath = await mappingScript.map(mappedPath, mappingScriptParams);
             }
 
             if (filePath) {
                 if (isJsonOut) {
-                    fs.appendFileSync(filePath, `"${mappedPath}"\n`);
+                    if (totalCounter > 0) {
+                        fs.appendFileSync(filePath, ',\n');
+                    }
+                    if (tryJSON(mappedPath)) {
+                        fs.appendFileSync(filePath, `${mappedPath}`);
+                    } else {
+                        fs.appendFileSync(filePath, `"${mappedPath}"`);
+                    }
                 } else {
                     fs.appendFileSync(filePath, `${mappedPath}\n`);
                 }
@@ -143,7 +159,7 @@ const handler = async (argv) => {
                 console.log(`${mappedPath}`);
             }
             totalCounter++;
-        });
+        }, timeFilter);
         if (isJsonOut) {
             fs.appendFileSync(filePath, ']');
         }
