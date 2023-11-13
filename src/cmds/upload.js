@@ -10,6 +10,7 @@ import DriveAPI from '../impl/DriveAPI.js';
 
 let drive = null;
 let driveAPI = null; 
+let listenerFiles = [];
 
 const command = 'upload';
 const desc = 'upload site content to Google Drive';
@@ -132,27 +133,66 @@ const cleanupScan = async (folderId, concurrency) => {
         const file = entry.file;
         const path = entry.path;
         const fileName = file.name;
-        const parentFolderId = file.parents[0];
+        const parentFolderId = (file.parents && file.parents.length > 0) ? file.parents[0] : folderId;
         const docId = file.id;
         uploadStatus.processing += 1;
         uploadStatus.fileCount += 1;
-        const googleDocs = await getGoogleFilesByName(parentFolderId, fileName.split('.')[0], 'application/vnd.google-apps.document');
-        console.log(`Deleting document ${path} (${formatFileSize(file.size)}) -> ${file.mimeType}`);
-        if (googleDocs && googleDocs.length > 0) {
-            await tryToDeleteDocument(docId, path);
+        console.log(`Checking ${path}`);
+        if (file.mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+            const googleDocs = await getGoogleFilesByName(parentFolderId, fileName.split('.')[0], 'application/vnd.google-apps.document');
+            if (googleDocs && googleDocs.length > 0) {
+                console.log(`Delete Word Document ${file.name}. Modified ${file.modifiedTime}.`);
+                await tryToDeleteDocument(docId, path);
+            }
+        } else if (file.mimeType === 'application/vnd.google-apps.document') {
+            let files = await getGoogleFilesByName(parentFolderId, file.name);
+            if (files.length > 1) {
+                files.sort((a, b) => { Date.parse(b.modifiedTime) - Date.parse(a.modifiedTime) });
+                for (const f of files) {
+                    if (f === files[0]) continue;
+                    console.log(`Delete duplicate file ${path} (id: ${f.id}). Modified ${f.modifiedTime}.`);
+                    await tryToDeleteDocument(f.id, path);
+                }
+            } else {
+                console.log(`${path} - no duplicates found for`);
+            }
         }
     }
 
     let entries = [];
+    let count = 0;
     await driveAPI.scanFiles(folderId, async (file, path) => {
+        count++;
+        console.log(`${count}) ${path} (${formatFileSize(file.size)})`);
+        if (concurrency && concurrency > 1) {
+            entries.push({file, path});
+        } else {
+            await callback({file, path})
+        }
+        /*
         if (file.mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-            console.log(`${path} (${formatFileSize(file.size)})`);
             if (concurrency && concurrency > 1) {
                 entries.push({file, path});
             } else {
                 await callback({file, path})
             }
-        }
+        } else if (file.mimeType === 'application/vnd.google-apps.document') {
+            // cleanup duplicates
+            let parentFolderId = (file.parents && file.parents.length > 0) ? file.parents[0] : folderId;
+            let files = await getGoogleFilesByName(parentFolderId, file.name);
+            if (files.length > 1) {
+                files.sort((a, b) => { Date.parse(b.modifiedTime) - Date.parse(a.modifiedTime) });
+                for (const file of files) {
+                    if (file === files[0]) continue;
+                    console.log(`Delete duplicate file ${file.name}. Modified ${file.modifiedTime}.`);
+                    if (concurrency && concurrency > 1) {
+                        entries.push({file, path});
+                    } else {
+                        await callback({file, path})
+                    }
+                }
+            }
+        }*/
 
         if (entries.length > 1000) {
             await ConcurrencyUtil.processAll(entries, callback, {}, concurrency, 3000, true);
@@ -232,6 +272,12 @@ const builder = {
             Upload Modes: ${JSON.stringify(MODE_DESCRIPTION, null, 2)} \n`,
         default: `${MODE_VALUES[0]}`
     },
+    listener: {
+        alias: 'l',
+        describe: 'Start listening',
+        type: 'boolean',
+        default: false
+    }
 };
 
 const getFolderIdByName = async (parentId, name) => {
@@ -302,12 +348,25 @@ const createFolder = async (parentId, name) => {
         parents: [parentId]
     };
 
-    const response = await drive.files.create({
-        resource: r,
-        fields: 'id',
+    const callback = async () => {
+        const response = await drive.files.create({
+            resource: r,
+            fields: 'id',
+        });
+        return response;
+    }
+
+    const p = new Promise(async (resolve, reject) => { 
+        backoff(
+            callback, 
+            (resp) => { 
+                resolve(resp.data.id);
+            }, (err) => {
+                reject(err);
+            });
     });
 
-    return response.data.id;
+    return p;
 }
 
 const folderIdCache = {};
@@ -653,7 +712,7 @@ const handler = async (argv) => {
                 await printRemoteFileListing(argv.target);
             }
             finish();
-        } else if (entries.length > 0 && uploadStatus.mode !== MODES.scanonly) {
+        } else if (uploadStatus.mode !== MODES.scanonly) {
             const asyncCallback = async (filePath, options, index, array) => {
                 return new Promise(async (resolve) => {
                     try {
@@ -670,12 +729,45 @@ const handler = async (argv) => {
                 });
             }
 
-            ConcurrencyUtil.processAll(entries, asyncCallback, {}, argv.async, 3000, true).then(async () => {
-                if (uploadStatus.printTarget) {
-                    await printRemoteFileListing(argv.target);
-                }
-                finish();
-            });
+            if (entries.length > 0) {
+                ConcurrencyUtil.processAll(entries, asyncCallback, {}, argv.async, 3000, true).then(async () => {
+                    if (uploadStatus.printTarget) {
+                        await printRemoteFileListing(argv.target);
+                    }
+                    await finish();
+                });
+            }
+
+            if (argv.listener) {
+                fs.watch(source, 
+                    {persistent: true, recursive: true},
+                    (eventType, filename) => {
+                        if (filename !== 'import-report.xlsx' && (eventType === 'rename' || eventType === 'change')) {
+                            let path = `${source}${filename}`;
+                            console.log(`File change detected ${path} (${eventType})`);
+                            listenerFiles.push(filename);
+                        }
+                    });
+                console.log(`Listening to file changes under ${source}`);
+
+                setInterval(async () => {
+                    while (listenerFiles.length > 0) {
+                        let relPath = listenerFiles.pop();
+                        let filePath = (source.endsWith('/')) ? `${source}${relPath}` : `${source}/${relPath}`;
+                        if (fs.existsSync(filePath)) {
+                            let stat = fs.statSync(filePath);
+                            if (stat.isDirectory()) {
+                                await getOrCreateFolderByPath(argv.target, relPath.split('/'));
+                                console.log(`Google Folder ${relPath} created.`);
+                            } else {
+                                console.log(`Uploading file ${filePath} detected by upload listener.`);
+                                await doUpload(argv.target, filePath, relPath.split('/'), stat);
+                            }
+                        }
+                    }
+                }, 3000);
+            }
+
         } else if (uploadStatus.printTarget) {
             console.log('Printing Google Drive file listing.');
             await printRemoteFileListing(argv.target);
