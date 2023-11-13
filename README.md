@@ -200,6 +200,11 @@ Estimate total number of files and total size of the upload, and print current f
 ./index.js upload -t 1HyaaV7_cFS4O0rHm2Zk2KChUOjjjj -s ./myImportedDocs -c credentials.json -mode scanonly -p
 ```
 
+Start a folder listener and upload files when they are created/modified:
+```
+./index.js upload -t 1HyaaV7_cFS4O0rHm2Zk2KChUOjjjj -s ./myImportedDocs -c credentials.json -mode overwrite -l
+```
+
 ## Publishing Usage and Examples
 
 ```
