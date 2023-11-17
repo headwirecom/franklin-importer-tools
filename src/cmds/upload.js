@@ -169,30 +169,6 @@ const cleanupScan = async (folderId, concurrency) => {
         } else {
             await callback({file, path})
         }
-        /*
-        if (file.mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-            if (concurrency && concurrency > 1) {
-                entries.push({file, path});
-            } else {
-                await callback({file, path})
-            }
-        } else if (file.mimeType === 'application/vnd.google-apps.document') {
-            // cleanup duplicates
-            let parentFolderId = (file.parents && file.parents.length > 0) ? file.parents[0] : folderId;
-            let files = await getGoogleFilesByName(parentFolderId, file.name);
-            if (files.length > 1) {
-                files.sort((a, b) => { Date.parse(b.modifiedTime) - Date.parse(a.modifiedTime) });
-                for (const file of files) {
-                    if (file === files[0]) continue;
-                    console.log(`Delete duplicate file ${file.name}. Modified ${file.modifiedTime}.`);
-                    if (concurrency && concurrency > 1) {
-                        entries.push({file, path});
-                    } else {
-                        await callback({file, path})
-                    }
-                }
-            }
-        }*/
 
         if (entries.length > 1000) {
             await ConcurrencyUtil.processAll(entries, callback, {}, concurrency, 3000, true);
@@ -555,8 +531,8 @@ const doUpload = async (folderId, documentPath, pathParts, fileStat) => {
             break;  
         case MODES.keepRemote: 
             try {
-                let allFiles = await getGoogleFilesByName(folderId, fileName);
-                allFiles = allFiles.concat(await getGoogleFilesByName(folderId, fileName.split('.')[0]));
+                let allFiles = await getGoogleFilesByName(parentId, fileName);
+                allFiles = allFiles.concat(await getGoogleFilesByName(parentId, fileName.split('.')[0]));
                 if (allFiles.length === 0) {
                     try {
                         await tryToUploadDocument(parentId, documentPath, fileName, fileSize);
@@ -568,6 +544,7 @@ const doUpload = async (folderId, documentPath, pathParts, fileStat) => {
                     console.log(`${uploadStatus.fileCount}. ${documentPath} (${formatedSize}) finished. Time ${updateTimer()}.`);
                 } else {
                     report(relPath, 'skipped', formatedSize, `File exists on Google Drive`);
+                    console.log(`${documentPath} skipped. File exists on Google Drive`);
                     uploadStatus.processing -= 1;
                 }
             } catch (err) {
@@ -578,8 +555,8 @@ const doUpload = async (folderId, documentPath, pathParts, fileStat) => {
             break;
         case MODES.overwrite:
             try {
-                let files = await getGoogleFilesByName(folderId, fileName);
-                files = files.concat(await getGoogleFilesByName(folderId, fileName.split('.')[0]));
+                let files = await getGoogleFilesByName(parentId, fileName);
+                files = files.concat(await getGoogleFilesByName(parentId, fileName.split('.')[0]));
                 for (const file of files) {
                     console.log(`Deleting file ${file.name}. Modified ${Date.parse(file.modifiedTime)}. Local Moddified ${fileStat.mtimeMs}`);
                     try {
@@ -607,8 +584,8 @@ const doUpload = async (folderId, documentPath, pathParts, fileStat) => {
             break;
         case MODES.overwriteOlder:
             try {
-                let files = await getGoogleFilesByName(folderId, fileName);
-                files = files.concat(await getGoogleFilesByName(folderId, fileName.split('.')[0]));
+                let files = await getGoogleFilesByName(parentId, fileName);
+                files = files.concat(await getGoogleFilesByName(parentId, fileName.split('.')[0]));
                 let deleted = false;
                 for (const file of files) {
                     const gdLastModified = Date.parse(file.modifiedTime);
