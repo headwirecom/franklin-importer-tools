@@ -28,8 +28,9 @@ function logIndexResponse(path, text) {
     const indeces = json.results;
     let logTxt = `${counter}. ${path}`;
     indeces.forEach((index) => {
-      if (index.record) {
-        let indexRecord = JSON.stringify(index.record);
+      const record = (index.record) ? index.record : index;  
+      if (record) {
+        let indexRecord = JSON.stringify(record);
         logTxt = logTxt + ` Index name "${index.name}": ${indexRecord} ${updateTimer()}`;
       }
     });
@@ -173,9 +174,8 @@ const handler = async (argv) => {
 
     
     console.log(`Publishing ${urls.length}.`);
-    processAsync([...urls], options).then(() => {
-        console.log(`Finished "${op}" operation on ${counter} documents in ${updateTimer()}. Failed ${errorCount}.`);
-    });
+    await processAsync([...urls], options);
+    console.log(`Finished "${op}" operation on ${counter} documents in ${updateTimer()}. Failed ${errorCount}.`);
 }
 
 export default {

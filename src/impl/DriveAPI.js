@@ -1,5 +1,6 @@
 import { google } from 'googleapis';
 import { asJson } from '../impl/args.js';
+import { absPath } from './filesystem.js';
 import fs from 'fs';
 import { resolve } from 'path';
 import express from 'express';
@@ -84,14 +85,26 @@ export default class DriveAPI {
     init(credentialsPath, callback) {
         return new Promise((resolve, reject) => {
             asJson(credentialsPath).then((credentials) => {
-                authorize(credentials, async (auth) => {
-                    console.log(`Google Drive API Login Successful.`);
+                if (credentials.installed) {
+                    // Authenticate user and create a token file if needed.
+                    authorize(credentials, async (auth) => {
+                        console.log(`Google Drive API Login Successful.`);
+                        drive = google.drive({ version: 'v3', auth });
+                        if (callback) {
+                            callback(drive);
+                        }
+                        resolve(drive);
+                    });
+                } else {
+                    // Service Account
+                    const keyFilePath = absPath(credentialsPath);
+                    const auth = new google.auth.GoogleAuth({ keyFile: keyFilePath, scopes: SCOPES });
                     drive = google.drive({ version: 'v3', auth });
                     if (callback) {
                         callback(drive);
                     }
                     resolve(drive);
-                });
+                }
             }).catch((err) => {
                 console.log(`Unable to load Google Drive API. Credentials file ${credentialsPath}: ${err.message}`);
                 reject(err);
