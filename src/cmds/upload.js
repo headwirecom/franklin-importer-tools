@@ -663,7 +663,7 @@ const handler = async (argv) => {
 
         await listLocalFiles(source, async (filePath, stats) => {
             const relPath = (source.endsWith('/')) ? filePath.substring(source.length) : filePath.substring(source.length+1);
-            if (stats.isFile()) {
+            if (stats.isFile() && !argv.listener) {
                 uploadStatus.totalSizeUpload = uploadStatus.totalSizeUpload + stats.size;
                 entries.push(filePath)
             } else if (uploadStatus.mode !== MODES.scanonly && uploadStatus.mode !== MODES.convert && uploadStatus.mode !== MODES.cleanup && stats.isDirectory() && hasFiles(filePath)) {
@@ -725,7 +725,7 @@ const handler = async (argv) => {
                             listenerFiles.push(filename);
                         }
                     });
-                console.log(`Listening to file changes under ${source}`);
+                console.log(`Listening to file changes under ${source}. Mode '${uploadStatus.mode}'`);
 
                 setInterval(async () => {
                     while (listenerFiles.length > 0) {
