@@ -142,23 +142,25 @@ const handler = async (argv) => {
                 mappedPath = await mappingScript.map(mappedPath, mappingScriptParams);
             }
 
-            if (filePath) {
-                if (isJsonOut) {
-                    if (totalCounter > 0) {
-                        fs.appendFileSync(filePath, ',\n');
-                    }
-                    if (tryJSON(mappedPath)) {
-                        fs.appendFileSync(filePath, `${mappedPath}`);
+            if (mappedPath) {
+                if (filePath) {
+                    if (isJsonOut) {
+                        if (totalCounter > 0) {
+                            fs.appendFileSync(filePath, ',\n');
+                        }
+                        if (tryJSON(mappedPath)) {
+                            fs.appendFileSync(filePath, `${mappedPath}`);
+                        } else {
+                            fs.appendFileSync(filePath, `"${mappedPath}"`);
+                        }
                     } else {
-                        fs.appendFileSync(filePath, `"${mappedPath}"`);
+                        fs.appendFileSync(filePath, `${mappedPath}\n`);
                     }
                 } else {
-                    fs.appendFileSync(filePath, `${mappedPath}\n`);
+                    console.log(`${mappedPath}`);
                 }
-            } else {
-                console.log(`${mappedPath}`);
+                totalCounter++;
             }
-            totalCounter++;
         }, timeFilter);
         if (isJsonOut) {
             fs.appendFileSync(filePath, ']');
