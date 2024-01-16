@@ -602,7 +602,7 @@ const doUpload = async (folderId, documentPath, pathParts, fileStat) => {
                     }
                 }
 
-                if (deleted) {
+                if (deleted || files.length == 0) {
                     try {
                         await tryToUploadDocument(parentId, documentPath, fileName, fileSize);
                     } catch (err) {
