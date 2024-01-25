@@ -610,12 +610,15 @@ const doUpload = async (folderId, documentPath, pathParts, fileStat) => {
                         report(relPath, 'error', formatedSize, `Unable to upload: ${err.message}`);
                         uploadStatus.processing -= 1;
                     }
+                    uploadStatus.fileCount += 1;
+                    console.log(`${uploadStatus.fileCount}. ${documentPath} (${formatedSize}) finished. Time ${updateTimer()}.`);
                 } else {
-                    report(relPath, 'skipped', formatedSize, `Google Drive file is newer. Not uploading.`);
+                    // report(relPath, 'skipped', formatedSize, `Google Drive file is newer. Not uploading.`);
                     uploadStatus.processing -= 1;
+                    uploadStatus.fileCount += 1;
+                    console.log(`${uploadStatus.fileCount}. ${documentPath} (${formatedSize}) skipped. Google Drive file is newer. Time ${updateTimer()}.`);
                 }
-                uploadStatus.fileCount += 1;
-                console.log(`${uploadStatus.fileCount}. ${documentPath} (${formatedSize}) finished. Time ${updateTimer()}.`);
+                
             } catch (err) {
                 console.log(`Unable to upload document ${documentPath}. Time ${updateTimer()}.`, err);
                 report(relPath, 'error', formatedSize, `Unable to upload: ${err.message}`);
